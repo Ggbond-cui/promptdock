@@ -493,8 +493,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 selection = result.text
                 Log.info("读取选区：\(result.text.count) 字，来源 \(result.source.rawValue)，应用 \(actionTarget?.bundleIdentifier ?? "-")")
             } else {
-                notices.append("未读取到选中文字：请先在应用中选中一段文字")
-                Log.info("未读取到选区，应用 \(actionTarget?.bundleIdentifier ?? "-")")
+                // 读不到选区直接进输入回退模式（placeholder 已说明用法），不再提示「去选中文字」
+                Log.info("未读取到选区（输入回退模式），应用 \(actionTarget?.bundleIdentifier ?? "-")")
             }
         } else {
             notices.append("需要辅助功能权限才能读取选中文字（菜单栏 → 辅助功能权限）")
