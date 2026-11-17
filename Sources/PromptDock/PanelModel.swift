@@ -46,6 +46,8 @@ final class PanelModel: ObservableObject {
     @Published var phase: ActionPhase = .choosing
     @Published var output = ""
     @Published private(set) var activePrompt: Prompt?
+    /// 本次执行发给模型的输入文本（选区或剪贴板），收藏词汇表时取它做原文。
+    @Published private(set) var activeInput = ""
     @Published private(set) var activeOutputMode: OutputMode = .replace
     /// 当前调用的「服务 · 模型」，显示在结果面板标题栏。
     @Published private(set) var activeTargetLabel = ""
@@ -55,8 +57,10 @@ final class PanelModel: ObservableObject {
     @Published private(set) var runningPrompt: Prompt?
     /// 系统语音合成状态（spec 8.1）：🔊 按钮据此切换为 ⏹。
     @Published var isSpeaking = false
-    /// 当前朗读文本的音标（spec 9.4）：模型异步返回的 IPA，标在 🔊 右边；换朗读/返回/重开面板时清空。
-    @Published var phonetic: String?
+    /// 当前朗读文本的音标与释义（spec 9.4）：模型异步返回，标在 🔊 左侧；换朗读/返回/重开面板时清空。
+    @Published var phonetic: PhoneticInfo?
+    /// 本次结果是否已收藏到 Obsidian 词汇表（spec 9.4）：⭐ 据此变实心。
+    @Published var favorited = false
 
     private var allPrompts: [Prompt] = []
     private var frecency: [String: Double] = [:]
@@ -80,6 +84,8 @@ final class PanelModel: ObservableObject {
         activePrompt = nil
         runningPrompt = nil
         phonetic = nil
+        favorited = false
+        activeInput = ""
         addingPrompt = false
         editingPrompt = nil
         pendingDelete = nil
@@ -98,19 +104,22 @@ final class PanelModel: ObservableObject {
         selection = min(max(selection + delta, 0), results.count - 1)
     }
 
-    func beginAction(_ prompt: Prompt, output mode: OutputMode, targetLabel: String) {
+    func beginAction(_ prompt: Prompt, input: String, output mode: OutputMode, targetLabel: String) {
         activePrompt = prompt
+        activeInput = input
         activeOutputMode = mode
         activeTargetLabel = targetLabel
         isThinking = false
         output = ""
+        phonetic = nil
+        favorited = false
         phase = .running
     }
 
     /// ⌥Space 面板内 ✨ 直接跑模型（spec 8.1）：输入为剪贴板文本，结果只显示不覆盖，↩ 复制。
-    func beginPromptRun(_ prompt: Prompt, targetLabel: String) {
+    func beginPromptRun(_ prompt: Prompt, input: String, targetLabel: String) {
         runningPrompt = prompt
-        beginAction(prompt, output: .show, targetLabel: targetLabel)
+        beginAction(prompt, input: input, output: .show, targetLabel: targetLabel)
     }
 
     /// 结果页返回动作列表（spec 9.4）：不关面板，清空本次结果，焦点回搜索框，选区保留可重跑。
@@ -121,6 +130,8 @@ final class PanelModel: ObservableObject {
         activePrompt = nil
         runningPrompt = nil
         phonetic = nil
+        favorited = false
+        activeInput = ""
         notice = nil
         query = ""          // 触发 recompute，列表回到完整动作列表
         focusRequest += 1

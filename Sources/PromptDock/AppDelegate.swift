@@ -59,6 +59,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.onLookupPhonetic = { [weak self] text, completion in
             self?.lookupPhonetic(text, completion: completion)
         }
+        panel.onFavorite = { [weak self] source, explanation, phonetic in
+            guard let self else { return "收藏失败" }
+            return self.favoriteToVault(source: source, explanation: explanation, phonetic: phonetic)
+        }
         settingsWindow.onSave = { [weak self] base, target in self?.saveLibrary(from: base, to: target) }
         settingsWindow.onHotkeyRecording = { [weak self] in self?.setHotkeysPaused($0) }
 
@@ -272,24 +276,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// 🔊 朗读时的音标查询（spec 9.4）：短英文文本发给默认模型要美式 IPA，
+    /// 🔊 朗读时的音标查询（spec 9.4）：短英文文本发给默认模型要美式 IPA + 简要中文释义，
     /// 返回经 SpeechPhonetics.normalize 清洗，无效或失败一律回调 nil（不打扰朗读）。
-    private func lookupPhonetic(_ text: String, completion: @escaping (String?) -> Void) {
+    private func lookupPhonetic(_ text: String, completion: @escaping (PhoneticInfo?) -> Void) {
         guard SpeechPhonetics.shouldLookup(text) else {
             completion(nil)
             return
         }
         let settings = state.library.settings
         let instruction = """
-            给出下面英文单词或短语的音标（美式 IPA）。要求：
-            - 只输出音标本身，用 / 包住（如 /ræɡ/）；缩写词按字母读（如 GPU → /ˌdʒiː piː ˈjuː/）
-            - 不要编号、不要解释、不要其他任何文字
+            给出下面英文单词或短语的：1）美式音标；2）简要中文意思（不超过 12 个字）。
+            格式：只输出一行，先是 / 包住的音标，空一格接中文意思。缩写词按字母读音标，中文意思给全称。
+            示例：GPU → /ˌdʒiː piː ˈjuː/ 图形处理器
+            不要编号、不要解释、不要其他任何文字。
 
             文本：
             \(text)
             """
         Task {
-            var ipa: String?
+            var info: PhoneticInfo?
             do {
                 let target = try LLMTargetResolver.resolve(
                     prompt: Prompt(id: "_ipa", title: "_ipa", content: text), settings: settings)
@@ -305,12 +310,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 for try await event in stream {
                     if case .text(let chunk) = event { output += chunk }
                 }
-                ipa = SpeechPhonetics.normalize(output)
-                Log.info("音标查询完成：\(ipa == nil ? "无有效结果" : "已获取")")
+                info = SpeechPhonetics.normalize(output)
+                Log.info("音标查询完成：\(info == nil ? "无有效结果" : "已获取")")
             } catch {
                 Log.error("音标查询失败：\(error.localizedDescription)")
             }
-            completion(ipa)
+            completion(info)
+        }
+    }
+
+    /// ⭐ 收藏到 Obsidian 词汇表（spec 9.4）：原文 + 模型解释 + 音标释义按月归档，最新在最上。
+    private func favoriteToVault(source: String, explanation: String, phonetic: PhoneticInfo?) -> String? {
+        let trimmedSource = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedExplanation = explanation.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSource.isEmpty, !trimmedExplanation.isEmpty else {
+            return "原文或解释为空：等生成完成再收藏"
+        }
+        guard let vault = ObsidianVaultLocator.locate() else {
+            return "没找到 Obsidian 仓库（vault）：确认已安装并打开过 Obsidian"
+        }
+        do {
+            let dir = vault.appendingPathComponent(VocabularyNotebook.folderName, isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent(VocabularyNotebook.fileName())
+            let existing = try? String(contentsOf: file, encoding: .utf8)
+            let entry = VocabularyNotebook.entry(
+                title: VocabularyNotebook.title(for: trimmedSource),
+                phonetic: phonetic,
+                source: trimmedSource,
+                explanation: trimmedExplanation)
+            var content = existing ?? VocabularyNotebook.template()
+            content = VocabularyNotebook.insert(entry: entry, into: content)
+            try content.write(to: file, atomically: true, encoding: .utf8)
+            Log.info("已收藏到 \(VocabularyNotebook.folderName)/\(VocabularyNotebook.fileName())")
+            return nil
+        } catch {
+            Log.error("收藏失败：\(error.localizedDescription)")
+            return "收藏失败：\(error.localizedDescription)"
         }
     }
 
@@ -490,9 +526,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // 请求发出前就失败（缺 Key、服务未定义）：切到结果区显示，避免只有一行小字像「没反应」
             let label = prompt.provider ?? settings.llm.provider
             if panelRun {
-                model.beginPromptRun(prompt, targetLabel: label)
+                model.beginPromptRun(prompt, input: selection, targetLabel: label)
             } else {
-                model.beginAction(prompt, output: rendered.output, targetLabel: label)
+                model.beginAction(prompt, input: selection, output: rendered.output, targetLabel: label)
             }
             model.phase = .failed(error.localizedDescription
                 + "\n\n可以在菜单栏 → API Key 中设置，或修改 prompts.yaml 中的 settings.llm.provider。")
@@ -504,9 +540,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         model.notice = nil
         let targetLabel = "\(target.provider.name) · \(target.model)"
         if panelRun {
-            model.beginPromptRun(prompt, targetLabel: targetLabel)
+            model.beginPromptRun(prompt, input: selection, targetLabel: targetLabel)
         } else {
-            model.beginAction(prompt, output: rendered.output, targetLabel: targetLabel)
+            model.beginAction(prompt, input: selection, output: rendered.output, targetLabel: targetLabel)
         }
         record(prompt, .action)
 
