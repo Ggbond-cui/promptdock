@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var watcher: FileWatcher?
     private var hotkeyErrors: [UInt32: String] = [:]
     private var registeredHotkeys: [UInt32: String] = [:]
+    /// 设置窗口录制快捷键期间暂停全局快捷键（spec 9.5），否则录不到已注册的组合。
+    private var hotkeysPaused = false
     /// 进行中的模型调用；面板关闭时取消。
     private var actionTask: Task<Void, Never>?
     /// 执行动作时的目标应用（替换原文时粘贴回去）。
@@ -38,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.onCommand = { [weak self] command in self?.handlePanelCommand(command) }
         panel.onClose = { [weak self] in self?.cancelAction() }
         settingsWindow.onSave = { [weak self] base, target in self?.saveLibrary(from: base, to: target) }
+        settingsWindow.onHotkeyRecording = { [weak self] in self?.setHotkeysPaused($0) }
 
         reload()
         watcher = FileWatcher(file: Paths.configFile) { [weak self] in
@@ -139,7 +142,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return nil
     }
 
+    private func setHotkeysPaused(_ paused: Bool) {
+        guard paused != hotkeysPaused else { return }
+        hotkeysPaused = paused
+        if paused {
+            hotkeys.unregister(id: Self.promptPanelHotkeyID)
+            hotkeys.unregister(id: Self.actionPanelHotkeyID)
+            registeredHotkeys = [:]
+            Log.info("录制快捷键，全局快捷键已暂停")
+        } else {
+            registerHotkeysIfChanged()
+        }
+    }
+
     private func registerHotkeysIfChanged() {
+        guard !hotkeysPaused else { return }
         let config = state.library.settings.hotkeys
         let entries: [(UInt32, String, () -> Void)] = [
             (Self.promptPanelHotkeyID, config.promptPanel, { [weak self] in self?.togglePanel() }),
