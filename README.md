@@ -2,12 +2,20 @@
 
 macOS 菜单栏提示词管理器。在任何输入框里按 **⌥Space** 呼出面板，搜索提示词后回车，内容直接粘贴到原来的位置；选中一段文字按 **⌥⇧Space**，可以用预设的提示词调用大模型改写，结果替换原文。
 
+<p align="center"><img src="docs/screenshots/prompt-panel.png" width="720" alt="提示词面板：左侧搜索结果，右侧预览内容"></p>
+
 - **快速查找**：模糊搜索标题、关键词、标签和内容，按使用频率和最近使用时间自动排序
 - **占位符**：提示词里写 `{{天数}}`，粘贴后光标自动停在这里并选中，直接输入即可替换
 - **选中文字动作**：润色、翻译、精简……流式显示结果，回车替换原文，⌘↩ 复制
 - **多模型**：同时支持 Anthropic 和 OpenAI 兼容协议（DeepSeek、Ollama 本地模型等），每个动作可以指定不同的服务和模型
 - **纯文本配置**：所有提示词和设置都在一个 YAML 文件里，保存后自动生效，方便用 git 管理；也可以在设置窗口里编辑
 - API Key 存在系统钥匙串，不写入配置文件和日志
+
+### 设置窗口
+
+| 通用 | 模型服务 | 提示词 |
+|---|---|---|
+| <img src="docs/screenshots/settings-general.png" alt="通用设置：快捷键、粘贴、模型、网络"> | <img src="docs/screenshots/settings-providers.png" alt="模型服务：协议、地址、模型、API Key"> | <img src="docs/screenshots/settings-prompts.png" alt="提示词编辑：标题、类型、关键词、内容"> |
 
 ## 下载安装
 

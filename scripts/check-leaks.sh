@@ -28,13 +28,15 @@ else
 fi
 
 # ---- 2. 禁止提交的文件类型 ----
+# 例外：docs/screenshots/ 下的 README 截图（只能用 Resources/prompts.example.yaml 的示例数据截取）
+allowed='^docs/screenshots/[^/]+\.png$'
 forbidden='\.(png|jpe?g|gif|heic|mov|mp4|sqlite3?|db|log|p12|pfx|pem|key|cer|mobileprovision|env)$|(^|/)\.env(\.|$)'
 if [[ "$mode" == "--staged" ]]; then
   files=$(git diff --cached --name-only --diff-filter=ACMR)
 else
   files=$(git ls-files)
 fi
-bad_files=$(grep -iE "$forbidden" <<<"$files" || true)
+bad_files=$(grep -iE "$forbidden" <<<"$files" | grep -vE "$allowed" || true)
 if [[ -n "$bad_files" ]]; then
   red "✗ 禁止提交的文件类型（截图、数据库、日志、证书、环境变量文件）："
   sed 's/^/    /' <<<"$bad_files"

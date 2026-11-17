@@ -40,6 +40,6 @@ macOS 菜单栏提示词管理器（Swift 6 / SwiftPM，macOS 15+）。⌥Space 
 
 - 流程：先写 spec，再 TDD，然后在真实环境验证并截图，用户实测通过后用 `--no-ff` 合并。一个功能一个分支（`feat/*`）。
 - 这是公开仓库。提交被泄露检查拦下时先确认内容，不要随手 `--no-verify`；需要新增个人敏感词就写进 `.git/info/leak-denylist`，不要写进任何被跟踪的文件。
-- 截图里可能有用户的工作内容，只放在临时目录，不进仓库。用户自己的提示词也不进仓库，`Resources/prompts.example.yaml` 只放通用示例。
+- 截图里可能有用户的工作内容，只放在临时目录，不进仓库。唯一例外是 README 用的 `docs/screenshots/*.png`（泄露检查已放行）：截取前先备份用户配置、换成 `Resources/prompts.example.yaml`，截完恢复并核对校验和。用户自己的提示词也不进仓库，`Resources/prompts.example.yaml` 只放通用示例。
 - 日志不记录选中文本、模型输出和 Key，只记字数、耗时、stop_reason。
 - 改用户的 `~/.config/promptdock/prompts.yaml` 之前，先备份。
