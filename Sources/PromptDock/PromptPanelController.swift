@@ -147,6 +147,13 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
         case .paste, .copy:
             onCommand(command)
             return true
+        case .select(let index):
+            // 数字直选：仅选择阶段且搜索框为空时生效（正在输入时数字是内容，放行给输入框）
+            guard model.phase == .choosing, model.query.isEmpty,
+                  model.results.indices.contains(index - 1) else { return false }
+            model.selection = index - 1
+            onCommand(.paste)
+            return true
         case .back:
             // ← 只在结果/生成中阶段有意义（动作面板或 ✨ 跑模型）；列表与搜索框里放行（光标移动）
             guard model.phase != .choosing, model.mode != .prompts || model.runningPrompt != nil else { return false }

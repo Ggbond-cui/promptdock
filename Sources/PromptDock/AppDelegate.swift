@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let hotkeys = HotkeyManager()
     private let panel = PromptPanelController()
     private let settingsWindow = SettingsWindowController()
+    private let historyWindow = HistoryWindowController()
+    /// 调用历史存储（懒加载，打开失败只记日志不影响主流程）。
+    private var historyStore: HistoryStore?
     private var watcher: FileWatcher?
     private var hotkeyErrors: [UInt32: String] = [:]
     private var registeredHotkeys: [UInt32: String] = [:]
@@ -564,7 +567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func runAction(_ prompt: Prompt, selection: String, panelRun: Bool) {
         let model = panel.model
         guard !selection.isEmpty else {
-            model.notice = "没有选中文字，无法执行。请关闭面板，选中文字后再按快捷键"
+            model.notice = "没有可处理的内容：选中文字后再按快捷键，或在上方输入内容"
             return
         }
 
@@ -641,6 +644,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     if stopReason == "max_tokens" { self.panel.model.notice = "输出达到长度上限，结果可能不完整" }
                     self.panel.model.phase = .done
                     if rendered.output == .copy { PasteService.copy(self.cleanedOutput()) }
+                    self.recordHistory(title: prompt.title, target: targetLabel, input: selection,
+                                       output: self.panel.model.output)
                 }
             } catch {
                 guard let self, !Task.isCancelled else { return }
@@ -741,6 +746,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(item("设置…", #selector(menuSettings)))
+        menu.addItem(item("调用历史…", #selector(menuHistory)))
         menu.addItem(item("编辑提示词…", #selector(menuEdit)))
         menu.addItem(item("重新加载", #selector(menuReload)))
         menu.addItem(item("打开数据目录", #selector(menuReveal)))
@@ -799,6 +805,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func menuShowPanel() { showPanel() }
 
     @objc private func menuSettings() { settingsWindow.show(library: state.library) }
+
+    @objc private func menuHistory() {
+        historyWindow.show(
+            entries: (try? historyStoreIfEnabled()?.recent()) ?? [],
+            onCopy: { PasteService.copy($0) },
+            onClear: { [weak self] in
+                self?.historyStoreIfEnabled()?.clear()
+                self?.historyWindow.host.rootView = HistoryView(entries: [], onCopy: { _ in }, onClear: {})
+            })
+    }
+
+    /// 调用历史：settings.keep_history 开启时才有存储；首次调用时打开数据库。
+    private func historyStoreIfEnabled() -> HistoryStore? {
+        guard state.library.settings.keepHistory else { return nil }
+        if let historyStore { return historyStore }
+        do {
+            historyStore = try HistoryStore(path: Paths.historyDatabase.path)
+            Log.info("调用历史已开启：\(Paths.historyDatabase.path)")
+            return historyStore
+        } catch {
+            Log.error("调用历史数据库打开失败：\(error.localizedDescription)")
+            return nil   // 失败只影响历史，不影响主流程
+        }
+    }
+
+    private func recordHistory(title: String, target: String, input: String, output: String) {
+        historyStoreIfEnabled()?.add(title: title, target: target, input: input, output: output)
+    }
 
     @objc private func menuSetDefaultProvider(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String, name != state.library.settings.llm.provider else { return }

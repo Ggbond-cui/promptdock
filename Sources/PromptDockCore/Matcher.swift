@@ -15,6 +15,9 @@ public enum Matcher {
     static let keywordWeight = 0.9
     static let tagWeight = 0.6
     static let contentWeight = 0.3
+    /// 拼音档权重：低于关键词、高于内容——直接打中文/关键词的命中应排在前。
+    static let pinyinFullWeight = 0.85
+    static let pinyinInitialsWeight = 0.8
     /// frecency 加成上限（结果集内最大 frecency 拿满加成）。
     static let frecencyBonus = 0.3
 
@@ -62,12 +65,17 @@ public enum Matcher {
 
     private static func matchScore(normalizedQuery q: String, prompt: Prompt) -> Double {
         guard !q.isEmpty else { return 0 }
-        let candidates: [(Double, [String])] = [
+        var candidates: [(Double, [String])] = [
             (titleWeight, [prompt.title]),
             (keywordWeight, prompt.keywords),
             (tagWeight, prompt.tags),
             (contentWeight, [prompt.content]),
         ]
+        // 中文标题的拼音索引（spec 10）：pcwt / paichawenti 都能命中「排查问题」
+        if let pinyin = Pinyin.index(for: prompt.title) {
+            candidates.append((pinyinFullWeight, [pinyin.full]))
+            candidates.append((pinyinInitialsWeight, [pinyin.initials]))
+        }
         var best = 0.0
         for (weight, texts) in candidates where weight > best {
             for text in texts {
