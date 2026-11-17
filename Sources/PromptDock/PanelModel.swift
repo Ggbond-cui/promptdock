@@ -49,6 +49,8 @@ final class PanelModel: ObservableObject {
     @Published var isThinking = false
     /// ⌥Space 面板内通过 ✨ 直接跑模型的条目（spec 8.1）：非 nil 时面板处于结果阶段。
     @Published private(set) var runningPrompt: Prompt?
+    /// 系统语音合成状态（spec 8.1）：🔊 按钮据此切换为 ⏹。
+    @Published var isSpeaking = false
 
     private var allPrompts: [Prompt] = []
     private var frecency: [String: Double] = [:]

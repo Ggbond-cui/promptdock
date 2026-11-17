@@ -243,10 +243,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             提示词内容：
             \(content)
             """
-        Task { [weak self] in
+        Task {
             var words: [String] = []
             do {
-                guard let self else { completion([]); return }
                 let target = try LLMTargetResolver.resolve(
                     prompt: Prompt(id: "_kw", title: "_kw", content: content), settings: settings)
                 let rendered = RenderedAction(system: "", userMessage: instruction, output: .show)
