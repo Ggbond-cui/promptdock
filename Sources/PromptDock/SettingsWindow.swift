@@ -8,11 +8,14 @@ final class SettingsWindowController {
     private var window: NSWindow?
     /// 返回 nil 表示成功，否则为错误信息。
     var onSave: ((PromptLibrary, PromptLibrary) -> String?)?
+    /// 快捷键录制开始 / 结束，用于暂停和恢复全局快捷键。
+    var onHotkeyRecording: ((Bool) -> Void)?
 
     func show(library: PromptLibrary, tab: SettingsTab = .general) {
         let model = SettingsModel(library: library)
         model.tab = tab
         model.onSave = { [weak self] base, target in self?.onSave?(base, target) }
+        model.onHotkeyRecording = { [weak self] in self?.onHotkeyRecording?($0) }
         let host = NSHostingController(rootView: SettingsView(model: model))
         if let window {
             window.contentViewController = host
@@ -57,6 +60,9 @@ final class SettingsModel {
     var keyInput = ""
     var message: String?
     var isError = false
+    /// 快捷键录制被拒绝的原因（按提示词面板 / 动作面板分别显示）。
+    var hotkeyHint: [String: String] = [:]
+    var onHotkeyRecording: ((Bool) -> Void)?
     var prompts: [PromptRow]
     var promptSelection: PromptRow.ID?
     var promptQuery = ""
@@ -231,9 +237,9 @@ private struct GeneralTab: View {
     var body: some View {
         Form {
             Section("快捷键") {
-                TextField("提示词面板", text: $model.general.promptPanel)
-                TextField("动作面板", text: $model.general.actionPanel)
-                Text("格式如 option+space、control+shift+p；修饰键 command / control / option / shift")
+                hotkeyRow("提示词面板", key: "prompt", text: $model.general.promptPanel)
+                hotkeyRow("动作面板", key: "action", text: $model.general.actionPanel)
+                Text("点击后按下组合键录制，至少包含一个修饰键（⌃⌥⇧⌘）；Esc 取消。录制期间全局快捷键暂停")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("粘贴") {
@@ -255,6 +261,23 @@ private struct GeneralTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func hotkeyRow(_ title: String, key: String, text: Binding<String>) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            HotkeyRecorder(
+                text: text,
+                onRecordingChange: { model.onHotkeyRecording?($0) },
+                onHint: { model.hotkeyHint[key] = $0 }
+            )
+            .frame(width: 180, height: 24)
+        }
+        if let hint = model.hotkeyHint[key] {
+            Text(hint).font(.caption).foregroundStyle(.red)
+        }
     }
 }
 

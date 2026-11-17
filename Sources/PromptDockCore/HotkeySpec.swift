@@ -17,13 +17,16 @@ public struct HotkeySpec: Sendable, Equatable {
     public var keyName: String
 
     /// 按 macOS 惯例顺序显示：⌃⌥⇧⌘ + 键名。
-    public var displayString: String {
+    public var displayString: String { Self.symbols(modifiers) + keyName }
+
+    /// 修饰键符号，按 ⌃⌥⇧⌘ 顺序；录制时实时显示已按住的修饰键。
+    public static func symbols(_ modifiers: Modifiers) -> String {
         var s = ""
         if modifiers.contains(.control) { s += "⌃" }
         if modifiers.contains(.option) { s += "⌥" }
         if modifiers.contains(.shift) { s += "⇧" }
         if modifiers.contains(.command) { s += "⌘" }
-        return s + keyName
+        return s
     }
 
     public static func parse(_ text: String) throws(HotkeyParseError) -> HotkeySpec {
@@ -47,6 +50,26 @@ public struct HotkeySpec: Sendable, Equatable {
         guard !modifiers.isEmpty else { throw .missingModifier }
         return HotkeySpec(keyCode: key.code, modifiers: modifiers, keyName: key.name)
     }
+
+    /// 写回 YAML 的配置字符串，修饰键按 control、option、shift、command 顺序，例如 "option+shift+space"。
+    public var configString: String {
+        var parts: [String] = []
+        if modifiers.contains(.control) { parts.append("control") }
+        if modifiers.contains(.option) { parts.append("option") }
+        if modifiers.contains(.shift) { parts.append("shift") }
+        if modifiers.contains(.command) { parts.append("command") }
+        parts.append(Self.keyTokens[keyCode] ?? keyName.lowercased())
+        return parts.joined(separator: "+")
+    }
+
+    /// 由设置窗口录到的按键生成快捷键；支持的按键与 parse 相同。
+    public static func recorded(keyCode: UInt32, modifiers: Modifiers) throws(HotkeyParseError) -> HotkeySpec {
+        guard let token = keyTokens[keyCode] else { throw .unsupportedKey }
+        guard !modifiers.isEmpty else { throw .missingModifier }
+        return HotkeySpec(keyCode: keyCode, modifiers: modifiers, keyName: displayName(token))
+    }
+
+    private static let keyTokens: [UInt32: String] = Dictionary(uniqueKeysWithValues: keyCodes.map { ($1, $0) })
 
     private static let modifierAliases: [String: Modifiers] = [
         "cmd": .command, "command": .command,
@@ -83,6 +106,7 @@ public enum HotkeyParseError: Error, Equatable, CustomStringConvertible {
     case missingKey
     case multipleKeys
     case missingModifier
+    case unsupportedKey
 
     public var description: String {
         switch self {
@@ -91,6 +115,7 @@ public enum HotkeyParseError: Error, Equatable, CustomStringConvertible {
         case .missingKey: "缺少按键（只有修饰键）"
         case .multipleKeys: "只能有一个非修饰键"
         case .missingModifier: "至少需要一个修饰键（cmd/option/ctrl/shift）"
+        case .unsupportedKey: "不支持该按键（可用字母、数字、F1–F12、Space、Return、Tab、Esc）"
         }
     }
 }
