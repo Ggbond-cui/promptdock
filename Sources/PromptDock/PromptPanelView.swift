@@ -271,9 +271,20 @@ struct PromptPanelView: View {
                 ProgressView().controlSize(.small)
                 Text(model.isThinking && model.output.isEmpty ? "思考中…" : "生成中…").foregroundStyle(.secondary)
             case .done:
-                Label("完成", systemImage: "checkmark.circle").foregroundStyle(.green)
+                // 淡色底胶囊徽章：裸绿字在浅灰面板上太素（用户反馈），加底色和描边更像状态标签
+                Label("完成", systemImage: "checkmark")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Color.green.opacity(0.12)))
+                    .overlay(Capsule().strokeBorder(Color.green.opacity(0.3)))
             case .failed:
-                Label("失败", systemImage: "xmark.octagon").foregroundStyle(.red)
+                Label("失败", systemImage: "xmark")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Capsule().fill(Color.red.opacity(0.1)))
+                    .overlay(Capsule().strokeBorder(Color.red.opacity(0.3)))
             case .choosing:
                 EmptyView()
             }
