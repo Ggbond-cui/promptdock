@@ -39,6 +39,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         panel.onCommand = { [weak self] command in self?.handlePanelCommand(command) }
         panel.onClose = { [weak self] in self?.cancelAction() }
+        panel.onAddPrompt = { [weak self] title, keywords, content in
+            guard let self else { return "保存失败" }
+            return self.addPromptFromPanel(title: title, keywords: keywords, content: content)
+        }
+        panel.onUpdatePrompt = { [weak self] id, title, keywords, content in
+            guard let self else { return "保存失败" }
+            return self.updatePromptFromPanel(id: id, title: title, keywords: keywords, content: content)
+        }
+        panel.onDeletePrompt = { [weak self] id in
+            guard let self else { return "删除失败" }
+            return self.deletePromptFromPanel(id: id)
+        }
+        panel.onBackFromResult = { [weak self] in self?.cancelAction() }
+        panel.onRunPrompt = { [weak self] prompt in self?.runPromptFromPanel(prompt) }
+        panel.onGenerateKeywords = { [weak self] content, completion in
+            self?.generateKeywords(content: content, completion: completion)
+        }
         settingsWindow.onSave = { [weak self] base, target in self?.saveLibrary(from: base, to: target) }
         settingsWindow.onHotkeyRecording = { [weak self] in self?.setHotkeysPaused($0) }
 
@@ -129,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 Log.info("已写入配置：默认服务 \(target.settings.llm.provider)，服务 \(target.settings.providers.count) 个，提示词 \(target.prompts.count) 条")
             }
         } catch let error as SettingsWriterError {
+            Log.error("写入配置被拒绝：\(error.message)")
             return error.message
         } catch {
             Log.error("写入配置失败：\(error)")
@@ -140,6 +158,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         reload()
         return nil
+    }
+
+    /// 面板内新增提示词（spec 8.1）：追加一条 snippet 后走统一写回通道，热加载后面板列表自动刷新。
+    /// base 以磁盘当前内容为准（追加语义不需要内存态做基准），避免热加载窗口期内 state 落后于磁盘
+    /// 被冲突检测误判为「编辑期间被外部修改」。成功返回 nil，失败返回给表单显示的错误信息。
+    private func addPromptFromPanel(title: String, keywords: [String], content: String) -> String? {
+        modifyLibraryFromPanel { current in
+            var target = current
+            let id = Prompt.uniqueID(title: title, existing: Set(current.prompts.map(\.id)))
+            target.prompts.append(Prompt(id: id, title: title, keywords: keywords, content: content))
+            Log.info("面板新增提示词：\(id)")
+            return (target, nil)
+        }
+    }
+
+    /// 编辑条目（spec 8.1）：只改 title/keywords/content，id 与其余字段（type、provider、output 等）不动，
+    /// 改名不影响使用统计。同样以磁盘为 base，避免热加载窗口期冲突误判。
+    private func updatePromptFromPanel(id: String, title: String, keywords: [String], content: String) -> String? {
+        modifyLibraryFromPanel { current in
+            guard let index = current.prompts.firstIndex(where: { $0.id == id }) else {
+                return (nil, "该条目已被外部修改或删除，请关闭表单后重试")
+            }
+            var target = current
+            target.prompts[index].title = title
+            target.prompts[index].keywords = keywords
+            target.prompts[index].content = content
+            return (target, nil)
+        }
+    }
+
+    /// 删除条目（spec 8.1）：写盘前自动备份 .bak。
+    private func deletePromptFromPanel(id: String) -> String? {
+        modifyLibraryFromPanel { current in
+            guard current.prompts.contains(where: { $0.id == id }) else {
+                return (nil, "该条目已被外部删除")
+            }
+            var target = current
+            target.prompts.removeAll { $0.id == id }
+            return (target, nil)
+        }
+    }
+
+    /// 面板表单写盘的公共路径：读磁盘 → 以解析结果为 base 做修改 → ConfigWriter 写回 → reload。
+    private func modifyLibraryFromPanel(
+        _ change: (PromptLibrary) -> (library: PromptLibrary?, failure: String?)
+    ) -> String? {
+        let url = Paths.configFile.resolvingSymlinksInPath()
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let current: PromptLibrary
+            do {
+                current = try PromptLibraryParser.parse(text).library
+            } catch let error as PromptLibraryError {
+                return "配置文件当前有错误，请先修复后再保存：\(error)"
+            }
+            let (target, failure) = change(current)
+            if let failure { return failure }
+            guard let target else { return "操作失败" }
+            let updated = try ConfigWriter.update(text, from: current, to: target)
+            try text.write(to: url.appendingPathExtension("bak"), atomically: true, encoding: .utf8)
+            try updated.write(to: url, atomically: true, encoding: .utf8)
+            Log.info("面板已写入配置：提示词 \(target.prompts.count) 条")
+            reload()
+            return nil
+        } catch let error as SettingsWriterError {
+            Log.error("面板写入被拒绝：\(error.message)")
+            return error.message
+        } catch {
+            Log.error("面板写入失败：\(error)")
+            return "写入失败：\(error)"
+        }
+    }
+
+    /// 表单内「生成关键词」（spec 8.1）：内容文本发给默认模型提炼，风格对齐示例配置（中文短词 + 英文缩写混排）。
+    private func generateKeywords(content: String, completion: @escaping ([String]) -> Void) {
+        let settings = state.library.settings
+        let instruction = """
+            从下面的提示词内容中提炼 3-5 个用于搜索的关键词。要求：
+            - 每个词 1-5 个字符，中文短词为主，有通用英文缩写就加英文（如 审查 review、性能 perf、周报 weekly）
+            - 覆盖核心动作与对象，不重复
+            - 只输出关键词本身，用空格分隔；不要编号、不要解释、不要任何标点
+
+            提示词内容：
+            \(content)
+            """
+        Task { [weak self] in
+            var words: [String] = []
+            do {
+                guard let self else { completion([]); return }
+                let target = try LLMTargetResolver.resolve(
+                    prompt: Prompt(id: "_kw", title: "_kw", content: content), settings: settings)
+                let rendered = RenderedAction(system: "", userMessage: instruction, output: .show)
+                let request = try LLMRequestBuilder.build(
+                    rendered, target: target,
+                    apiKey: KeychainStore.readAPIKey(provider: target.provider.name),
+                    defaultEffort: settings.llm.effort)
+                var text = ""
+                let stream = LLMClient.stream(request, protocol: target.provider.protocolType) {
+                    LLMClient.sessionConfiguration(proxy: settings.network.proxy)
+                }
+                for try await event in stream {
+                    if case .text(let chunk) = event { text += chunk }
+                }
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                words = trimmed
+                    .split(whereSeparator: { ",，、;；\n\r\t ".contains($0) })
+                    .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "。.#*-")) }
+                    .filter { (1...12).contains($0.count) }
+                words = Array(words.prefix(6))
+                Log.info("关键词已生成：\(words.count) 个")
+            } catch {
+                Log.error("关键词生成失败：\(error.localizedDescription)")
+            }
+            completion(words)
+        }
     }
 
     private func setHotkeysPaused(_ paused: Bool) {
@@ -244,10 +377,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func handlePanelCommand(_ command: PanelCommand) {
         let model = panel.model
         switch (model.mode, model.phase) {
-        case (.prompts, _):
+        case (.prompts, .choosing):
             guard let prompt = model.selected?.prompt else { return }
             panel.hide()
             performSnippet(command, prompt)
+        case (.prompts, _):
+            // ✨ 跑模型的结果阶段：↩/⌘↩ 复制结果（show 语义）
+            applyActionResult(command)
         case (.actions, .choosing):
             guard let prompt = model.selected?.prompt else { return }
             runAction(prompt)
@@ -274,8 +410,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func runAction(_ prompt: Prompt) {
+        runAction(prompt, selection: panel.model.selectionText, panelRun: false)
+    }
+
+    /// ✨ 面板内直接跑模型（spec 8.1）：输入为剪贴板文本，结果只显示（show），↩ 复制。
+    private func runPromptFromPanel(_ prompt: Prompt) {
+        guard let text = NSPasteboard.general.string(forType: .string),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            panel.model.notice = "剪贴板没有文本：先复制要处理的内容（⌘C），再点 ✨"
+            return
+        }
+        runAction(prompt, selection: text, panelRun: true)
+    }
+
+    private func runAction(_ prompt: Prompt, selection: String, panelRun: Bool) {
         let model = panel.model
-        let selection = model.selectionText
         guard !selection.isEmpty else {
             model.notice = "没有选中文字，无法执行。请关闭面板，选中文字后再按快捷键"
             return
@@ -303,11 +452,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         cancelAction()
         model.notice = nil
-        model.beginAction(prompt, output: rendered.output, targetLabel: "\(target.provider.name) · \(target.model)")
+        let targetLabel = "\(target.provider.name) · \(target.model)"
+        if panelRun {
+            model.beginPromptRun(prompt, targetLabel: targetLabel)
+        } else {
+            model.beginAction(prompt, output: rendered.output, targetLabel: targetLabel)
+        }
         record(prompt, .action)
 
         let started = Date()
-        Log.info("执行动作 \(prompt.id)：服务 \(target.provider.name)（\(target.provider.protocolType.rawValue)），模型 \(target.model)，输入 \(selection.count) 字")
+        Log.info("执行动作 \(prompt.id)：服务 \(target.provider.name)（\(target.provider.protocolType.rawValue)），模型 \(target.model)，输入 \(selection.count) 字\(panelRun ? "（剪贴板）" : "")")
 
         let proxy = settings.network.proxy
         let proto = target.provider.protocolType
