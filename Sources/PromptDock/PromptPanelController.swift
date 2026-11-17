@@ -44,11 +44,15 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
     var onRunPrompt: (Prompt) -> Void = { _ in }
     /// 表单内「生成关键词」：内容文本 → 关键词（回调，空=失败）。
     var onGenerateKeywords: (String, @escaping ([String]) -> Void) -> Void = { _, _ in }
+    /// 🔊 朗读时查音标：文本 → IPA（回调，nil=无结果或不适用），由 AppDelegate 实现。
+    var onLookupPhonetic: (String, @escaping (String?) -> Void) -> Void = { _, _ in }
     /// 🔊 朗读开关（选中原文 / 模型输出），由内部 SpeechService 实现。
     private let speech = SpeechService()
 
     private let panel = FloatingPanel()
     private var keyMonitor: Any?
+    /// 音标查询令牌：新朗读开始时递增，迟到的查询结果按令牌丢弃（对齐关键词生成的迟到处理）。
+    private var phoneticToken = 0
 
     var isVisible: Bool { panel.isVisible }
 
@@ -81,7 +85,7 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
                 self?.onGenerateKeywords(content, completion) ?? completion([])
             },
             onBack: { [weak self] in self?.handleBackFromResult() },
-            onToggleSpeech: { [weak self] text in self?.speech.toggle(text) }
+            onToggleSpeech: { [weak self] text in self?.toggleSpeech(text) }
         ))
         // 透明标题栏区域默认算作安全区，内容会让出这一条，露出白色窗口底色；让内容铺满整个窗口
         host.safeAreaRegions = []
@@ -100,6 +104,7 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
         panel.orderOut(nil)
         removeKeyMonitor()
         speech.stop()   // 面板关闭即停读
+        phoneticToken += 1   // 在途音标查询作废
         onClose()
     }
 
@@ -147,8 +152,25 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
     /// 结果页/生成中返回动作列表：生成中先取消请求，朗读同步停止，再清状态回列表，选区保留可重跑。
     private func handleBackFromResult() {
         speech.stop()   // 返回列表后没有可停止的按钮，不能让声音悬空继续读
+        phoneticToken += 1
         if model.phase == .running { onBackFromResult() }
         model.backToChoosing()
+    }
+
+    /// 🔊 点击：停止当前朗读；或开始朗读并异步查音标，结果标在按钮右边。
+    private func toggleSpeech(_ text: String) {
+        if speech.isSpeaking {
+            speech.stop()
+            return
+        }
+        model.phonetic = nil
+        speech.speak(text)
+        phoneticToken += 1
+        let token = phoneticToken
+        onLookupPhonetic(text) { [weak self] ipa in
+            guard let self, token == self.phoneticToken, let ipa else { return }
+            self.model.phonetic = ipa
+        }
     }
 
     /// 在鼠标所在屏幕水平居中、偏上显示。
