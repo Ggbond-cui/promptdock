@@ -32,6 +32,18 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
     var onCommand: (PanelCommand) -> Void = { _ in }
     /// 面板关闭（Esc、点击外部、被隐藏）时调用，用于取消进行中的请求。
     var onClose: () -> Void = {}
+    /// 面板内新增表单保存：转发给 AppDelegate，返回 nil 成功。
+    var onAddPrompt: (String, [String], String) -> String? = { _, _, _ in nil }
+    /// 编辑表单保存：（打开表单时的原条目、名称、关键词、内容）→ 返回 nil 成功。
+    var onUpdatePrompt: (Prompt, String, [String], String) -> String? = { _, _, _, _ in nil }
+    /// 删除条目：id → 返回 nil 成功。
+    var onDeletePrompt: (String) -> String? = { _ in nil }
+    /// 结果页/生成中返回时，若有进行中的模型请求则取消（AppDelegate 接线）。
+    var onBackFromResult: () -> Void = {}
+    /// ✨ 直接跑模型（剪贴板输入），由 AppDelegate 实现。
+    var onRunPrompt: (Prompt) -> Void = { _ in }
+    /// 表单内「生成关键词」：内容文本 → 关键词（回调，空=失败）。
+    var onGenerateKeywords: (String, @escaping ([String]) -> Void) -> Void = { _, _ in }
 
     private let panel = FloatingPanel()
     private var keyMonitor: Any?
@@ -41,9 +53,29 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
     override init() {
         super.init()
         panel.delegate = self
-        let host = NSHostingView(rootView: PromptPanelView(model: model) { [weak self] command in
-            self?.handle(command)
-        })
+        let host = NSHostingView(rootView: PromptPanelView(
+            model: model,
+            onActivate: { [weak self] command in _ = self?.handle(command) },
+            onAddPrompt: { [weak self] title, keywords, content in
+                // 不能写 `self?.onAddPrompt(...) ?? "保存失败"`：optional chaining 会把结果包成
+                // String??，?? 只解一层，成功(nil) 会被错翻成 "保存失败"（实测踩坑）
+                guard let self else { return "保存失败" }
+                return self.onAddPrompt(title, keywords, content)
+            },
+            onUpdatePrompt: { [weak self] original, title, keywords, content in
+                guard let self else { return "保存失败" }
+                return self.onUpdatePrompt(original, title, keywords, content)
+            },
+            onDeletePrompt: { [weak self] id in
+                guard let self else { return "删除失败" }
+                return self.onDeletePrompt(id)
+            },
+            onRunPrompt: { [weak self] prompt in self?.onRunPrompt(prompt) },
+            onGenerateKeywords: { [weak self] content, completion in
+                self?.onGenerateKeywords(content, completion) ?? completion([])
+            },
+            onBack: { [weak self] in self?.handleBackFromResult() }
+        ))
         // 透明标题栏区域默认算作安全区，内容会让出这一条，露出白色窗口底色；让内容铺满整个窗口
         host.safeAreaRegions = []
         panel.contentView = host
@@ -72,13 +104,42 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
         MainActor.assumeIsolated { hide() }
     }
 
-    private func handle(_ command: PanelCommand) {
-        switch command {
-        case .moveUp: if model.phase == .choosing { model.move(-1) }
-        case .moveDown: if model.phase == .choosing { model.move(1) }
-        case .close: hide()
-        case .paste, .copy: onCommand(command)
+    /// 返回 true 表示命令已处理（事件吞掉），false 表示当前场景不适用（放行给输入控件）。
+    @discardableResult
+    private func handle(_ command: PanelCommand) -> Bool {
+        // 表单模式（新增/编辑）：Esc 关闭表单回到列表；其余按键（回车、↑↓、←）交给表单控件
+        if model.isFormActive {
+            if command == .close {
+                model.dismissForm()
+                return true
+            }
+            return false
         }
+        switch command {
+        case .moveUp:
+            if model.phase == .choosing { model.move(-1) }
+            return true
+        case .moveDown:
+            if model.phase == .choosing { model.move(1) }
+            return true
+        case .close:
+            hide()
+            return true
+        case .paste, .copy:
+            onCommand(command)
+            return true
+        case .back:
+            // ← 只在结果/生成中阶段有意义（动作面板或 ✨ 跑模型）；列表与搜索框里放行（光标移动）
+            guard model.phase != .choosing, model.mode != .prompts || model.runningPrompt != nil else { return false }
+            handleBackFromResult()
+            return true
+        }
+    }
+
+    /// 结果页/生成中返回动作列表：生成中先取消请求，再清状态回列表，选区保留可重跑。
+    private func handleBackFromResult() {
+        if model.phase == .running { onBackFromResult() }
+        model.backToChoosing()
     }
 
     /// 在鼠标所在屏幕水平居中、偏上显示。
@@ -103,8 +164,8 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
                 commandKey: event.modifierFlags.contains(.command),
                 hasMarkedText: composing
             ) else { return event }
-            self.handle(command)
-            return nil
+            // handle 返回 false 表示该命令在当前场景不适用（如 ← 在搜索框里），事件放行给输入控件
+            return self.handle(command) ? nil : event
         }
     }
 

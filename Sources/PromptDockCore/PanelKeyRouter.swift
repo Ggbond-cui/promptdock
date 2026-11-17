@@ -1,5 +1,5 @@
 public enum PanelCommand: Sendable, Equatable {
-    case moveUp, moveDown, paste, copy, close
+    case moveUp, moveDown, paste, copy, close, back
 }
 
 /// 面板内按键到命令的映射（spec 8.1）。
@@ -12,6 +12,7 @@ public enum PanelKeyRouter {
         case 125: return .moveDown
         case 36, 76: return commandKey ? .copy : .paste   // Return / 小键盘 Enter
         case 53: return .close
+        case 123: return .back                             // ←：动作结果页返回列表，其余场景放行
         default: return nil
         }
     }

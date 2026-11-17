@@ -43,6 +43,21 @@ public struct Prompt: Sendable, Equatable, Identifiable {
         self.system = system
         self.output = output
     }
+
+    /// 面板内新增条目时生成稳定 id：取 title 中的英文字母与数字作 kebab-case，
+    /// 中文等其余字符作分隔符；没有可用字符时用 "prompt"，与现有 id 冲突时追加 -2、-3 …
+    public static func uniqueID(title: String, existing: Set<String>) -> String {
+        let allowed = "abcdefghijklmnopqrstuvwxyz0123456789"
+        let base = title.lowercased().map { char -> String in allowed.contains(char) ? String(char) : "-" }.joined()
+        let slug = base.split(separator: "-", omittingEmptySubsequences: true).joined(separator: "-")
+        var candidate = slug.isEmpty ? "prompt" : slug
+        var suffix = 2
+        while existing.contains(candidate) {
+            candidate = "\(slug.isEmpty ? "prompt" : slug)-\(suffix)"
+            suffix += 1
+        }
+        return candidate
+    }
 }
 
 public struct HotkeySettings: Sendable, Equatable {
