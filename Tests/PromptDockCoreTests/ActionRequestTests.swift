@@ -339,3 +339,23 @@ private func parse(_ parser: some StreamLineParser, _ text: String, chunkSize: I
         #expect(request.value(forHTTPHeaderField: "authorization") == nil)
     }
 }
+
+/// ⌥Space 面板 ✨：snippet + 剪贴板文本直接跑模型（spec 8.1）。
+@Suite struct SnippetRunRenderTests {
+    @Test func 占位符去掉花括号后再发给模型() {
+        let p = Prompt(id: "s", title: "s", content: "写一份 {{天数}} 天的计划")
+        #expect(PromptRenderer.renderSnippetRun(p, input: "旅行").userMessage == "写一份 天数 天的计划\n\n旅行")
+    }
+
+    @Test func 结果只显示_不追加只输出文本约束() {
+        let p = Prompt(id: "s", title: "s", content: "总结", system: "你是助手", output: .replace)
+        let r = PromptRenderer.renderSnippetRun(p, input: "x")
+        #expect(r.output == .show)
+        #expect(r.system == "你是助手")
+    }
+
+    @Test func 支持selection占位符() {
+        let p = Prompt(id: "s", title: "s", content: "翻译：{selection}")
+        #expect(PromptRenderer.renderSnippetRun(p, input: "hi").userMessage == "翻译：hi")
+    }
+}
