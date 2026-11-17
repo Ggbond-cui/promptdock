@@ -602,6 +602,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let targetLabel = "\(target.provider.name) · \(target.model)"
         if panelRun {
             model.beginPromptRun(prompt, input: selection, targetLabel: targetLabel)
+            // 剪贴板预览（spec 8.1）：✨ 是盲发，执行时在提示条亮出剪贴板前 40 字供核对，
+            // 复制失败/残留旧内容一眼可辨；notice 保持到返回列表，结果阶段随时可回看当时发的是什么
+            let head = selection.prefix(40).replacingOccurrences(of: "\n", with: " ⏎ ")
+            model.notice = "剪贴板 \(selection.count) 字：\(head)\(selection.count > 40 ? "…" : "")"
         } else {
             model.beginAction(prompt, input: selection, output: rendered.output, targetLabel: targetLabel)
         }
