@@ -44,8 +44,10 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
     var onRunPrompt: (Prompt) -> Void = { _ in }
     /// 表单内「生成关键词」：内容文本 → 关键词（回调，空=失败）。
     var onGenerateKeywords: (String, @escaping ([String]) -> Void) -> Void = { _, _ in }
-    /// 🔊 朗读时查音标：文本 → IPA（回调，nil=无结果或不适用），由 AppDelegate 实现。
-    var onLookupPhonetic: (String, @escaping (String?) -> Void) -> Void = { _, _ in }
+    /// 🔊 朗读时查音标：文本 → 音标与释义（回调，nil=无结果或不适用），由 AppDelegate 实现。
+    var onLookupPhonetic: (String, @escaping (PhoneticInfo?) -> Void) -> Void = { _, _ in }
+    /// ⭐ 收藏到 Obsidian 词汇表：（原文、模型解释、音标释义）→ 返回 nil 成功，由 AppDelegate 实现。
+    var onFavorite: (String, String, PhoneticInfo?) -> String? = { _, _, _ in nil }
     /// 🔊 朗读开关（选中原文 / 模型输出），由内部 SpeechService 实现。
     private let speech = SpeechService()
 
@@ -85,7 +87,11 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
                 self?.onGenerateKeywords(content, completion) ?? completion([])
             },
             onBack: { [weak self] in self?.handleBackFromResult() },
-            onToggleSpeech: { [weak self] text in self?.toggleSpeech(text) }
+            onToggleSpeech: { [weak self] text in self?.toggleSpeech(text) },
+            onFavorite: { [weak self] source, explanation, phonetic in
+                guard let self else { return "收藏失败" }
+                return self.onFavorite(source, explanation, phonetic)
+            }
         ))
         // 透明标题栏区域默认算作安全区，内容会让出这一条，露出白色窗口底色；让内容铺满整个窗口
         host.safeAreaRegions = []
@@ -167,9 +173,9 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
         speech.speak(text)
         phoneticToken += 1
         let token = phoneticToken
-        onLookupPhonetic(text) { [weak self] ipa in
-            guard let self, token == self.phoneticToken, let ipa else { return }
-            self.model.phonetic = ipa
+        onLookupPhonetic(text) { [weak self] info in
+            guard let self, token == self.phoneticToken, let info else { return }
+            self.model.phonetic = info
         }
     }
 

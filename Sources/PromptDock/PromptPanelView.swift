@@ -20,6 +20,8 @@ struct PromptPanelView: View {
     var onBack: () -> Void = {}
     /// 🔊 朗读/停止朗读：参数为要读的文本（动作面板读选中原文，结果页读模型输出）。
     var onToggleSpeech: (String) -> Void = { _ in }
+    /// ⭐ 收藏到 Obsidian 词汇表：（原文、模型解释、音标释义）→ 返回 nil 成功，否则为错误信息。
+    var onFavorite: (String, String, PhoneticInfo?) -> String? = { _, _, _ in nil }
 
     @FocusState private var searchFocused: Bool
     @FocusState private var addTitleFocused: Bool
@@ -106,21 +108,26 @@ struct PromptPanelView: View {
             Text("选中 \(text.count) 字").font(.caption.weight(.medium))
             Text(oneLine).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             Spacer()
-            // 🔊 朗读选中原文：听清不认识的词；配合回车执行「解释」类动作边听边看
-            speechButton(text: text, help: model.isSpeaking ? "停止朗读" : "朗读选中的原文")
             phoneticText
+            // 🔊 固定在最右端不随音标伸缩：听清不认识的词；配合回车执行「解释」类动作边听边看
+            speechButton(text: text, help: model.isSpeaking ? "停止朗读" : "朗读选中的原文")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.bottom, 8)
     }
 
-    /// 音标（模型异步返回的 IPA），标在 🔊 右边，读到生词时对照发音。
+    /// 音标 + 简要中文释义（模型异步返回），长在 🔊 左侧，喇叭钉在右端不动。
     @ViewBuilder private var phoneticText: some View {
         if let phonetic = model.phonetic {
-            Text(phonetic)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                Text(phonetic.ipa)
+                    .font(.system(.caption, design: .monospaced))
+                if let gloss = phonetic.gloss {
+                    Text(gloss).font(.caption)
+                }
+            }
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
         }
     }
 
@@ -133,6 +140,26 @@ struct PromptPanelView: View {
         .foregroundStyle(.secondary)
         .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         .help(help)
+    }
+
+    /// ⭐ 收藏到 Obsidian 词汇表：成功后变实心黄星，本次结果内不可重复收藏。
+    private var favoriteButton: some View {
+        Button { favorite() } label: {
+            Image(systemName: model.favorited ? "star.fill" : "star")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(model.favorited ? Color.yellow : .secondary)
+        .disabled(model.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .help(model.favorited ? "已收藏到词汇表" : "收藏到 Obsidian 词汇表")
+    }
+
+    private func favorite() {
+        guard !model.favorited else { return }
+        if let error = onFavorite(model.activeInput, model.output, model.phonetic) {
+            model.notice = error
+        } else {
+            model.favorited = true
+        }
     }
 
     private var resultList: some View {
@@ -401,8 +428,11 @@ struct PromptPanelView: View {
             Text(footerLeft).foregroundStyle(.secondary)
             Spacer()
             if showsResult {
-                speechButton(text: model.output, help: model.isSpeaking ? "停止朗读" : "朗读结果")
+                favoriteButton
+                    .padding(.trailing, 12)
                 phoneticText
+                    .padding(.trailing, 8)
+                speechButton(text: model.output, help: model.isSpeaking ? "停止朗读" : "朗读结果")
                     .padding(.trailing, 12)
             }
             if showsBackButton {
