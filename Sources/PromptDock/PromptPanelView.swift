@@ -108,9 +108,20 @@ struct PromptPanelView: View {
             Spacer()
             // 🔊 朗读选中原文：听清不认识的词；配合回车执行「解释」类动作边听边看
             speechButton(text: text, help: model.isSpeaking ? "停止朗读" : "朗读选中的原文")
+            phoneticText
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.bottom, 8)
+    }
+
+    /// 音标（模型异步返回的 IPA），标在 🔊 右边，读到生词时对照发音。
+    @ViewBuilder private var phoneticText: some View {
+        if let phonetic = model.phonetic {
+            Text(phonetic)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
     }
 
     /// 🔊/⏹ 组合按钮：朗读中全局显示 ⏹（无论读的是原文还是结果），点击即停。
@@ -391,6 +402,7 @@ struct PromptPanelView: View {
             Spacer()
             if showsResult {
                 speechButton(text: model.output, help: model.isSpeaking ? "停止朗读" : "朗读结果")
+                phoneticText
                     .padding(.trailing, 12)
             }
             if showsBackButton {

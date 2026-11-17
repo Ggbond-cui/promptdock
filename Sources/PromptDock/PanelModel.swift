@@ -55,6 +55,8 @@ final class PanelModel: ObservableObject {
     @Published private(set) var runningPrompt: Prompt?
     /// 系统语音合成状态（spec 8.1）：🔊 按钮据此切换为 ⏹。
     @Published var isSpeaking = false
+    /// 当前朗读文本的音标（spec 9.4）：模型异步返回的 IPA，标在 🔊 右边；换朗读/返回/重开面板时清空。
+    @Published var phonetic: String?
 
     private var allPrompts: [Prompt] = []
     private var frecency: [String: Double] = [:]
@@ -77,6 +79,7 @@ final class PanelModel: ObservableObject {
         output = ""
         activePrompt = nil
         runningPrompt = nil
+        phonetic = nil
         addingPrompt = false
         editingPrompt = nil
         pendingDelete = nil
@@ -117,6 +120,7 @@ final class PanelModel: ObservableObject {
         isThinking = false
         activePrompt = nil
         runningPrompt = nil
+        phonetic = nil
         notice = nil
         query = ""          // 触发 recompute，列表回到完整动作列表
         focusRequest += 1

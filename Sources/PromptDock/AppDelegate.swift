@@ -56,6 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.onGenerateKeywords = { [weak self] content, completion in
             self?.generateKeywords(content: content, completion: completion)
         }
+        panel.onLookupPhonetic = { [weak self] text, completion in
+            self?.lookupPhonetic(text, completion: completion)
+        }
         settingsWindow.onSave = { [weak self] base, target in self?.saveLibrary(from: base, to: target) }
         settingsWindow.onHotkeyRecording = { [weak self] in self?.setHotkeysPaused($0) }
 
@@ -266,6 +269,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 Log.error("关键词生成失败：\(error.localizedDescription)")
             }
             completion(words)
+        }
+    }
+
+    /// 🔊 朗读时的音标查询（spec 9.4）：短英文文本发给默认模型要美式 IPA，
+    /// 返回经 SpeechPhonetics.normalize 清洗，无效或失败一律回调 nil（不打扰朗读）。
+    private func lookupPhonetic(_ text: String, completion: @escaping (String?) -> Void) {
+        guard SpeechPhonetics.shouldLookup(text) else {
+            completion(nil)
+            return
+        }
+        let settings = state.library.settings
+        let instruction = """
+            给出下面英文单词或短语的音标（美式 IPA）。要求：
+            - 只输出音标本身，用 / 包住（如 /ræɡ/）；缩写词按字母读（如 GPU → /ˌdʒiː piː ˈjuː/）
+            - 不要编号、不要解释、不要其他任何文字
+
+            文本：
+            \(text)
+            """
+        Task {
+            var ipa: String?
+            do {
+                let target = try LLMTargetResolver.resolve(
+                    prompt: Prompt(id: "_ipa", title: "_ipa", content: text), settings: settings)
+                let rendered = RenderedAction(system: "", userMessage: instruction, output: .show)
+                let request = try LLMRequestBuilder.build(
+                    rendered, target: target,
+                    apiKey: KeychainStore.readAPIKey(provider: target.provider.name),
+                    defaultEffort: settings.llm.effort)
+                var output = ""
+                let stream = LLMClient.stream(request, protocol: target.provider.protocolType) {
+                    LLMClient.sessionConfiguration(proxy: settings.network.proxy)
+                }
+                for try await event in stream {
+                    if case .text(let chunk) = event { output += chunk }
+                }
+                ipa = SpeechPhonetics.normalize(output)
+                Log.info("音标查询完成：\(ipa == nil ? "无有效结果" : "已获取")")
+            } catch {
+                Log.error("音标查询失败：\(error.localizedDescription)")
+            }
+            completion(ipa)
         }
     }
 
