@@ -26,7 +26,9 @@ final class SpeechService: NSObject, AVSpeechSynthesizerDelegate {
         stop()
         let utterance = AVSpeechUtterance(string: trimmed)
         utterance.voice = Self.voice(for: trimmed)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        // 温柔感微调：比默认稍慢、音调略抬（可感知的柔和，不夸张）
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
+        utterance.pitchMultiplier = 1.05
         synthesizer.speak(utterance)
         setState(true)
     }
@@ -42,12 +44,23 @@ final class SpeechService: NSObject, AVSpeechSynthesizerDelegate {
         onStateChanged?(speaking)
     }
 
-    /// 含 CJK 字符视为中文文本，否则英文；同语言里选音质最高的声音。
+    /// 含 CJK 字符视为中文文本，否则英文。声音选择三级排序：
+    /// 音质最高优先（下载了高级/增强声音后自动升级）→ 平级优先女声（更柔和）→ 名字序保证稳定。
     private static func voice(for text: String) -> AVSpeechSynthesisVoice? {
         let hasCJK = text.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) }
         let language = hasCJK ? "zh-CN" : "en-US"
-        let candidates = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix(language) }
-        return candidates.max { $0.quality.rawValue < $1.quality.rawValue }
+        return AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.hasPrefix(language) }
+            .sorted { a, b in
+                if a.quality.rawValue != b.quality.rawValue {
+                    return a.quality.rawValue > b.quality.rawValue
+                }
+                if a.gender != b.gender {
+                    return a.gender == .female
+                }
+                return a.name < b.name
+            }
+            .first
             ?? AVSpeechSynthesisVoice(language: language)
     }
 

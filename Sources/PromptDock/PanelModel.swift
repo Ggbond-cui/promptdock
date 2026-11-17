@@ -61,6 +61,8 @@ final class PanelModel: ObservableObject {
     @Published var phonetic: PhoneticInfo?
     /// 本次结果是否已收藏到 Obsidian 词汇表（spec 9.4）：⭐ 据此变实心。
     @Published var favorited = false
+    /// 收藏进行中（模型提炼词条正文）：⭐ 转进度圈，防连点。
+    @Published var favoriting = false
 
     private var allPrompts: [Prompt] = []
     private var frecency: [String: Double] = [:]
@@ -85,6 +87,7 @@ final class PanelModel: ObservableObject {
         runningPrompt = nil
         phonetic = nil
         favorited = false
+        favoriting = false
         activeInput = ""
         addingPrompt = false
         editingPrompt = nil
@@ -113,6 +116,7 @@ final class PanelModel: ObservableObject {
         output = ""
         phonetic = nil
         favorited = false
+        favoriting = false
         phase = .running
     }
 
@@ -131,6 +135,7 @@ final class PanelModel: ObservableObject {
         runningPrompt = nil
         phonetic = nil
         favorited = false
+        favoriting = false
         activeInput = ""
         notice = nil
         query = ""          // 触发 recompute，列表回到完整动作列表
