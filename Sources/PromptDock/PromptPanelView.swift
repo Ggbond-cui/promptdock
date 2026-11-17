@@ -16,6 +16,8 @@ struct PromptPanelView: View {
     var onGenerateKeywords: (String, @escaping ([String]) -> Void) -> Void = { _, _ in }
     /// 结果页/生成中点击返回箭头：由外部取消进行中的请求，模型状态由 backToChoosing 处理。
     var onBack: () -> Void = {}
+    /// 🔊 朗读/停止朗读：参数为要读的文本（动作面板读选中原文，结果页读模型输出）。
+    var onToggleSpeech: (String) -> Void = { _ in }
 
     @FocusState private var searchFocused: Bool
     @FocusState private var addTitleFocused: Bool
@@ -98,9 +100,23 @@ struct PromptPanelView: View {
         return HStack(spacing: 6) {
             Text("选中 \(text.count) 字").font(.caption.weight(.medium))
             Text(oneLine).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            Spacer()
+            // 🔊 朗读选中原文：听清不认识的词；配合回车执行「解释」类动作边听边看
+            speechButton(text: text, help: model.isSpeaking ? "停止朗读" : "朗读选中的原文")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.bottom, 8)
+    }
+
+    /// 🔊/⏹ 组合按钮：朗读中全局显示 ⏹（无论读的是原文还是结果），点击即停。
+    private func speechButton(text: String, help: String) -> some View {
+        Button { onToggleSpeech(text) } label: {
+            Image(systemName: model.isSpeaking ? "stop.circle" : "speaker.wave.2")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .help(help)
     }
 
     private var resultList: some View {
@@ -350,6 +366,10 @@ struct PromptPanelView: View {
         HStack {
             Text(footerLeft).foregroundStyle(.secondary)
             Spacer()
+            if showsResult {
+                speechButton(text: model.output, help: model.isSpeaking ? "停止朗读" : "朗读结果")
+                    .padding(.trailing, 12)
+            }
             if showsBackButton {
                 Button { onBack() } label: {
                     Image(systemName: "chevron.backward.circle")

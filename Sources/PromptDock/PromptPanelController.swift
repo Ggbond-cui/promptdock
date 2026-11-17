@@ -44,6 +44,8 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
     var onRunPrompt: (Prompt) -> Void = { _ in }
     /// 表单内「生成关键词」：内容文本 → 关键词（回调，空=失败）。
     var onGenerateKeywords: (String, @escaping ([String]) -> Void) -> Void = { _, _ in }
+    /// 🔊 朗读开关（选中原文 / 模型输出），由内部 SpeechService 实现。
+    private let speech = SpeechService()
 
     private let panel = FloatingPanel()
     private var keyMonitor: Any?
@@ -53,6 +55,10 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
     override init() {
         super.init()
         panel.delegate = self
+        // 朗读状态同步到面板模型，两个 🔊 按钮据此切换形态（任意一处朗读中，两处都显示 ⏹）
+        speech.onStateChanged = { [weak self] speaking in
+            self?.model.isSpeaking = speaking
+        }
         let host = NSHostingView(rootView: PromptPanelView(
             model: model,
             onActivate: { [weak self] command in _ = self?.handle(command) },
@@ -74,7 +80,8 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
             onGenerateKeywords: { [weak self] content, completion in
                 self?.onGenerateKeywords(content, completion) ?? completion([])
             },
-            onBack: { [weak self] in self?.handleBackFromResult() }
+            onBack: { [weak self] in self?.handleBackFromResult() },
+            onToggleSpeech: { [weak self] text in self?.speech.toggle(text) }
         ))
         // 透明标题栏区域默认算作安全区，内容会让出这一条，露出白色窗口底色；让内容铺满整个窗口
         host.safeAreaRegions = []
@@ -92,6 +99,7 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
         guard panel.isVisible else { return }
         panel.orderOut(nil)
         removeKeyMonitor()
+        speech.stop()   // 面板关闭即停读
         onClose()
     }
 
@@ -136,8 +144,9 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// 结果页/生成中返回动作列表：生成中先取消请求，再清状态回列表，选区保留可重跑。
+    /// 结果页/生成中返回动作列表：生成中先取消请求，朗读同步停止，再清状态回列表，选区保留可重跑。
     private func handleBackFromResult() {
+        speech.stop()   // 返回列表后没有可停止的按钮，不能让声音悬空继续读
         if model.phase == .running { onBackFromResult() }
         model.backToChoosing()
     }
