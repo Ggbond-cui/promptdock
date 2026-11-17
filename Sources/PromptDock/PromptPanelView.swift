@@ -1,4 +1,5 @@
 import PromptDockCore
+import AppKit
 import SwiftUI
 
 struct PromptPanelView: View {
@@ -6,8 +7,9 @@ struct PromptPanelView: View {
     var onActivate: (PanelCommand) -> Void
     /// 面板内新增表单保存：参数为（名称、关键词、内容），返回 nil 成功，否则为表单内显示的错误信息。
     var onAddPrompt: (String, [String], String) -> String? = { _, _, _ in nil }
-    /// 编辑表单保存：参数为（原 id、名称、关键词、内容），返回 nil 成功。id 不随改名变化（使用统计按 id 关联）。
-    var onUpdatePrompt: (String, String, [String], String) -> String? = { _, _, _, _ in nil }
+    /// 编辑表单保存：参数为（打开表单时的原条目、名称、关键词、内容），返回 nil 成功。
+    /// id 不随改名变化（使用统计按 id 关联）；原条目用于检测编辑期间的外部修改。
+    var onUpdatePrompt: (Prompt, String, [String], String) -> String? = { _, _, _, _ in nil }
     /// 删除条目：返回 nil 成功。
     var onDeletePrompt: (String) -> String? = { _ in nil }
     /// ✨ 直接用大模型跑该条（输入=剪贴板文本，spec 8.1）。
@@ -28,6 +30,8 @@ struct PromptPanelView: View {
     @State private var addContent = ""
     @State private var addError: String?
     @State private var generatingKeywords = false
+    /// 关键词生成请求的序号：表单关闭或重开后递增，迟到的旧结果不回填。
+    @State private var keywordRequest = 0
     /// 上一次行点击（时间、条目 id），用于自定义双击检测（单击立即选中不延迟）。
     @State private var lastRowClick: (date: Date, id: String)?
 
@@ -50,6 +54,7 @@ struct PromptPanelView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16).padding(.bottom, 8)
             }
+            if let pending = model.pendingDelete, !model.isFormActive, !showsResult { deleteConfirmBar(pending) }
             if isActionMode && !showsResult && !model.isFormActive { selectionBar }
             Divider()
             if showsResult {
@@ -69,8 +74,8 @@ struct PromptPanelView: View {
         .frame(width: 720, height: 420)
         .background(VisualEffectBackground())
         .onChange(of: model.focusRequest, initial: true) { searchFocused = true }
-        .onChange(of: model.addingPrompt) { formFocusChanged() }
-        .onChange(of: model.editingPrompt) { formFocusChanged() }
+        .onChange(of: model.addingPrompt) { keywordRequest += 1; generatingKeywords = false; formFocusChanged() }
+        .onChange(of: model.editingPrompt) { keywordRequest += 1; generatingKeywords = false; formFocusChanged() }
     }
 
     private func formFocusChanged() {
@@ -133,7 +138,7 @@ struct PromptPanelView: View {
                             .onTapGesture {
                                 model.selection = index
                                 let now = Date()
-                                if let last = lastRowClick, now.timeIntervalSince(last.date) < 0.3,
+                                if let last = lastRowClick, now.timeIntervalSince(last.date) < NSEvent.doubleClickInterval,
                                    last.id == item.prompt.id {
                                     lastRowClick = nil
                                     onActivate(.paste)
@@ -142,9 +147,12 @@ struct PromptPanelView: View {
                                 }
                             }
                             .contextMenu {
-                                Button("编辑…") { beginEdit(item.prompt) }
-                                Divider()
-                                Button("删除", role: .destructive) { deletePrompt(item.prompt) }
+                                // 编辑/删除只对提示词面板开放；动作面板的条目仍在设置窗口维护
+                                if !isActionMode {
+                                    Button("编辑…") { beginEdit(item.prompt) }
+                                    Divider()
+                                    Button("删除…", role: .destructive) { model.pendingDelete = item.prompt }
+                                }
                             }
                     }
                 }
@@ -174,14 +182,17 @@ struct PromptPanelView: View {
                     Text(prompt.keywords.joined(separator: " · "))
                         .font(.caption).foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary).lineLimit(1)
                 }
-                // ✨：剪贴板内容 + 该提示词直接跑大模型，结果在面板内显示（spec 8.1）
-                Button { onRunPrompt(prompt) } label: {
-                    Image(systemName: "wand.and.stars")
-                        .font(.caption)
+                // ✨：剪贴板内容 + 该提示词直接跑大模型，结果在面板内显示（spec 8.1）。
+                // 动作面板的输入是选区，不显示，避免和剪贴板输入混淆
+                if !isActionMode {
+                    Button { onRunPrompt(prompt) } label: {
+                        Image(systemName: "wand.and.stars")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary)
+                    .help("用大模型处理剪贴板内容")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary)
-                .help("用大模型处理剪贴板内容")
             }
         }
         .foregroundStyle(selected ? Color.white : Color.primary)
@@ -316,11 +327,20 @@ struct PromptPanelView: View {
         model.editingPrompt = prompt
     }
 
-    /// 右键「删除」：直接删除（写盘前自动备份 .bak），失败时以面板 notice 提示。
-    private func deletePrompt(_ prompt: Prompt) {
-        if let error = onDeletePrompt(prompt.id) {
-            model.notice = error
+    /// 右键「删除…」后的确认条：确认才写盘（写前备份 .bak），失败时以面板 notice 提示。
+    private func deleteConfirmBar(_ prompt: Prompt) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "trash").foregroundStyle(.red)
+            Text("删除「\(prompt.title)」？").lineLimit(1)
+            Spacer()
+            Button("取消") { model.pendingDelete = nil }
+            Button("删除", role: .destructive) {
+                model.pendingDelete = nil
+                if let error = onDeletePrompt(prompt.id) { model.notice = error }
+            }
         }
+        .font(.callout)
+        .padding(.horizontal, 16).padding(.bottom, 8)
     }
 
     private func generateKeywords() {
@@ -330,7 +350,10 @@ struct PromptPanelView: View {
             return
         }
         generatingKeywords = true
+        keywordRequest += 1
+        let request = keywordRequest
         onGenerateKeywords(content) { keywords in
+            guard request == keywordRequest else { return }   // 表单已关闭或重开，丢弃旧结果
             generatingKeywords = false
             if keywords.isEmpty {
                 addError = "关键词生成失败：模型服务不可用或返回为空，稍后再试"
@@ -348,7 +371,7 @@ struct PromptPanelView: View {
         let keywords = addKeywords.split(whereSeparator: { ",，、 ".contains($0) }).map(String.init)
         let error: String?
         if let editing = model.editingPrompt {
-            error = onUpdatePrompt(editing.id, title, keywords, content)
+            error = onUpdatePrompt(editing, title, keywords, content)
         } else {
             error = onAddPrompt(title, keywords, content)
         }

@@ -43,9 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return "保存失败" }
             return self.addPromptFromPanel(title: title, keywords: keywords, content: content)
         }
-        panel.onUpdatePrompt = { [weak self] id, title, keywords, content in
+        panel.onUpdatePrompt = { [weak self] original, title, keywords, content in
             guard let self else { return "保存失败" }
-            return self.updatePromptFromPanel(id: id, title: title, keywords: keywords, content: content)
+            return self.updatePromptFromPanel(original: original, title: title, keywords: keywords, content: content)
         }
         panel.onDeletePrompt = { [weak self] id in
             guard let self else { return "删除失败" }
@@ -160,74 +160,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return nil
     }
 
-    /// 面板内新增提示词（spec 8.1）：追加一条 snippet 后走统一写回通道，热加载后面板列表自动刷新。
-    /// base 以磁盘当前内容为准（追加语义不需要内存态做基准），避免热加载窗口期内 state 落后于磁盘
-    /// 被冲突检测误判为「编辑期间被外部修改」。成功返回 nil，失败返回给表单显示的错误信息。
+    /// 面板内新增提示词（spec 8.1）：追加一条 snippet 后走 saveLibrary 写回，热加载后列表自动刷新。
+    /// 成功返回 nil，失败返回给表单显示的错误信息。
     private func addPromptFromPanel(title: String, keywords: [String], content: String) -> String? {
         modifyLibraryFromPanel { current in
             var target = current
             let id = Prompt.uniqueID(title: title, existing: Set(current.prompts.map(\.id)))
             target.prompts.append(Prompt(id: id, title: title, keywords: keywords, content: content))
             Log.info("面板新增提示词：\(id)")
-            return (target, nil)
+            return .success(target)
         }
     }
 
-    /// 编辑条目（spec 8.1）：只改 title/keywords/content，id 与其余字段（type、provider、output 等）不动，
-    /// 改名不影响使用统计。同样以磁盘为 base，避免热加载窗口期冲突误判。
-    private func updatePromptFromPanel(id: String, title: String, keywords: [String], content: String) -> String? {
+    /// 编辑条目（spec 8.1）：只改 title/keywords/content，id 与其余字段不动，改名不影响使用统计。
+    /// 磁盘上该条与表单打开时不一致（外部修改过）则拒绝，避免静默覆盖。
+    private func updatePromptFromPanel(original: Prompt, title: String, keywords: [String], content: String) -> String? {
         modifyLibraryFromPanel { current in
-            guard let index = current.prompts.firstIndex(where: { $0.id == id }) else {
-                return (nil, "该条目已被外部修改或删除，请关闭表单后重试")
+            guard let index = current.prompts.firstIndex(where: { $0.id == original.id }) else {
+                return .failure("该条目已被外部删除，请取消后重试")
+            }
+            let onDisk = current.prompts[index]
+            guard onDisk.title == original.title, onDisk.keywords == original.keywords,
+                  onDisk.content == original.content else {
+                return .failure("该条目在编辑期间被外部修改，请取消后重新打开编辑")
             }
             var target = current
             target.prompts[index].title = title
             target.prompts[index].keywords = keywords
             target.prompts[index].content = content
-            return (target, nil)
+            return .success(target)
         }
     }
 
-    /// 删除条目（spec 8.1）：写盘前自动备份 .bak。
+    /// 删除条目（spec 8.1）：界面上已二次确认，写盘前备份 .bak。
     private func deletePromptFromPanel(id: String) -> String? {
         modifyLibraryFromPanel { current in
             guard current.prompts.contains(where: { $0.id == id }) else {
-                return (nil, "该条目已被外部删除")
+                return .failure("该条目已被外部删除")
             }
             var target = current
             target.prompts.removeAll { $0.id == id }
-            return (target, nil)
+            Log.info("面板删除提示词：\(id)")
+            return .success(target)
         }
     }
 
-    /// 面板表单写盘的公共路径：读磁盘 → 以解析结果为 base 做修改 → ConfigWriter 写回 → reload。
-    private func modifyLibraryFromPanel(
-        _ change: (PromptLibrary) -> (library: PromptLibrary?, failure: String?)
-    ) -> String? {
-        let url = Paths.configFile.resolvingSymlinksInPath()
+    private enum PanelChange {
+        case success(PromptLibrary)
+        case failure(String)
+    }
+
+    /// 面板表单写盘的公共路径：以磁盘当前解析结果为 base（避免热加载窗口期内存态落后于磁盘被误判冲突），
+    /// 修改后交给 saveLibrary 写回（备份、保注释、reload）。
+    private func modifyLibraryFromPanel(_ change: (PromptLibrary) -> PanelChange) -> String? {
+        let current: PromptLibrary
         do {
-            let text = try String(contentsOf: url, encoding: .utf8)
-            let current: PromptLibrary
-            do {
-                current = try PromptLibraryParser.parse(text).library
-            } catch let error as PromptLibraryError {
-                return "配置文件当前有错误，请先修复后再保存：\(error)"
-            }
-            let (target, failure) = change(current)
-            if let failure { return failure }
-            guard let target else { return "操作失败" }
-            let updated = try ConfigWriter.update(text, from: current, to: target)
-            try text.write(to: url.appendingPathExtension("bak"), atomically: true, encoding: .utf8)
-            try updated.write(to: url, atomically: true, encoding: .utf8)
-            Log.info("面板已写入配置：提示词 \(target.prompts.count) 条")
-            reload()
-            return nil
-        } catch let error as SettingsWriterError {
-            Log.error("面板写入被拒绝：\(error.message)")
-            return error.message
+            let text = try String(contentsOf: Paths.configFile.resolvingSymlinksInPath(), encoding: .utf8)
+            current = try PromptLibraryParser.parse(text).library
         } catch {
-            Log.error("面板写入失败：\(error)")
-            return "写入失败：\(error)"
+            return "配置文件当前有错误，请先修复后再保存：\(error)"
+        }
+        switch change(current) {
+        case .failure(let message): return message
+        case .success(let target): return saveLibrary(from: current, to: target)
         }
     }
 
@@ -380,8 +375,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let prompt = model.selected?.prompt else { return }
             panel.hide()
             performSnippet(command, prompt)
-        case (.prompts, _):
-            // ✨ 跑模型的结果阶段：↩/⌘↩ 复制结果（show 语义）
+        case (.prompts, .running):
+            break
+        case (.prompts, .failed):
+            // ✨ 跑模型失败：↩ 重试（重新读取剪贴板）
+            if command == .paste, let prompt = model.activePrompt { runPromptFromPanel(prompt) }
+        case (.prompts, .done):
+            // ✨ 跑模型完成：↩/⌘↩ 复制结果（show 语义）
             applyActionResult(command)
         case (.actions, .choosing):
             guard let prompt = model.selected?.prompt else { return }
@@ -430,7 +430,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         let settings = state.library.settings
-        let rendered = PromptRenderer.render(prompt, selection: selection)
+        let rendered = panelRun
+            ? PromptRenderer.renderSnippetRun(prompt, input: selection)
+            : PromptRenderer.render(prompt, selection: selection)
         let target: LLMTarget
         let request: URLRequest
         do {
@@ -442,7 +444,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } catch {
             // 请求发出前就失败（缺 Key、服务未定义）：切到结果区显示，避免只有一行小字像「没反应」
             let label = prompt.provider ?? settings.llm.provider
-            model.beginAction(prompt, output: rendered.output, targetLabel: label)
+            if panelRun {
+                model.beginPromptRun(prompt, targetLabel: label)
+            } else {
+                model.beginAction(prompt, output: rendered.output, targetLabel: label)
+            }
             model.phase = .failed(error.localizedDescription
                 + "\n\n可以在菜单栏 → API Key 中设置，或修改 prompts.yaml 中的 settings.llm.provider。")
             Log.error("动作未执行 \(prompt.id)：\(error.localizedDescription)")

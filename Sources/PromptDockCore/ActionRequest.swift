@@ -40,6 +40,17 @@ public enum PromptRenderer {
     }
 }
 
+extension PromptRenderer {
+    /// ⌥Space 面板 ✨（spec 8.1）：把 snippet 当作 action 跑，输入为剪贴板文本。
+    /// 先按粘贴规则去掉 `{{占位符}}` 的花括号，结果固定为 show（只显示，不追加「只输出文本」约束）。
+    public static func renderSnippetRun(_ prompt: Prompt, input: String) -> RenderedAction {
+        var p = prompt
+        p.content = SnippetTemplate.render(prompt.content).text
+        p.output = .show
+        return render(p, selection: input)
+    }
+}
+
 public struct LLMError: LocalizedError, Equatable {
     public let message: String
     public init(_ message: String) { self.message = message }

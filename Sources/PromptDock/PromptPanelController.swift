@@ -34,8 +34,8 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
     var onClose: () -> Void = {}
     /// 面板内新增表单保存：转发给 AppDelegate，返回 nil 成功。
     var onAddPrompt: (String, [String], String) -> String? = { _, _, _ in nil }
-    /// 编辑表单保存：（原 id、名称、关键词、内容）→ 返回 nil 成功。
-    var onUpdatePrompt: (String, String, [String], String) -> String? = { _, _, _, _ in nil }
+    /// 编辑表单保存：（打开表单时的原条目、名称、关键词、内容）→ 返回 nil 成功。
+    var onUpdatePrompt: (Prompt, String, [String], String) -> String? = { _, _, _, _ in nil }
     /// 删除条目：id → 返回 nil 成功。
     var onDeletePrompt: (String) -> String? = { _ in nil }
     /// 结果页/生成中返回时，若有进行中的模型请求则取消（AppDelegate 接线）。
@@ -68,9 +68,9 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
                 guard let self else { return "保存失败" }
                 return self.onAddPrompt(title, keywords, content)
             },
-            onUpdatePrompt: { [weak self] id, title, keywords, content in
+            onUpdatePrompt: { [weak self] original, title, keywords, content in
                 guard let self else { return "保存失败" }
-                return self.onUpdatePrompt(id, title, keywords, content)
+                return self.onUpdatePrompt(original, title, keywords, content)
             },
             onDeletePrompt: { [weak self] id in
                 guard let self else { return "删除失败" }

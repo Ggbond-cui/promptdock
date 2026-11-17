@@ -29,6 +29,10 @@ final class PanelModel: ObservableObject {
     /// 面板内嵌「编辑提示词」表单（spec 8.1）：非 nil 时主区域切换为表单并回填该条目。
     @Published var editingPrompt: Prompt?
 
+    /// 右键「删除」后等待确认的条目（spec 8.1）：非 nil 时面板顶部显示确认条。
+    /// 不用 NSAlert / SwiftUI alert：弹窗会让面板失去焦点而自动关闭。
+    @Published var pendingDelete: Prompt?
+
     /// 新增或编辑表单任一激活时为 true：按键路由按表单模式处理。
     var isFormActive: Bool { addingPrompt || editingPrompt != nil }
 
@@ -75,6 +79,7 @@ final class PanelModel: ObservableObject {
         runningPrompt = nil
         addingPrompt = false
         editingPrompt = nil
+        pendingDelete = nil
         query = ""          // 触发 recompute
         recompute()
         focusRequest += 1
