@@ -7,6 +7,9 @@ final class SpeechService: NSObject, AVSpeechSynthesizerDelegate {
 
     private let synthesizer = AVSpeechSynthesizer()
     private(set) var isSpeaking = false
+    /// 队列中还没读完的句子数：didFinish 回调时 isSpeaking 仍是 true（状态回落晚于回调，
+    /// 实测踩坑），不能用它判断播完，自己计数才可靠。
+    private var pendingUtterances = 0
     /// 朗读状态变化（开始/结束/取消）通知面板切换按钮形态（主线程回调）。
     var onStateChanged: (@MainActor (Bool) -> Void)?
 
@@ -25,8 +28,10 @@ final class SpeechService: NSObject, AVSpeechSynthesizerDelegate {
         guard !trimmed.isEmpty else { return }
         stop()
         // 按句切分逐句入队：句间自然停顿，长文节奏更像真人念稿（拼接式 TTS 一口气念完最机械）
+        let sentences = Self.sentences(in: trimmed)
+        guard !sentences.isEmpty else { return }
         let voice = Self.voice(for: trimmed)
-        for sentence in Self.sentences(in: trimmed) {
+        for sentence in sentences {
             let utterance = AVSpeechUtterance(string: sentence)
             utterance.voice = voice
             // 温柔感微调：比默认稍慢、音调略抬（可感知的柔和，不夸张）
@@ -34,12 +39,14 @@ final class SpeechService: NSObject, AVSpeechSynthesizerDelegate {
             utterance.pitchMultiplier = 1.05
             utterance.postUtteranceDelay = 0.3   // 句间呼吸感
             synthesizer.speak(utterance)
+            pendingUtterances += 1
         }
         setState(true)
     }
 
     func stop() {
         synthesizer.stopSpeaking(at: .immediate)
+        pendingUtterances = 0
         setState(false)
     }
 
@@ -94,9 +101,10 @@ final class SpeechService: NSObject, AVSpeechSynthesizerDelegate {
 
     // delegate 回调线程没有文档保证，不能 assumeIsolated（非主线程会直接崩溃）
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        // 参数 synthesizer 非 Sendable 不能跨 actor 捕获，用 self 上的同名属性判断
+        // 参数 synthesizer 非 Sendable 不能跨 actor 捕获；isSpeaking 此时仍是 true（见上），用计数判断
         Task { @MainActor in
-            if !self.synthesizer.isSpeaking { self.setState(false) }
+            self.pendingUtterances = max(0, self.pendingUtterances - 1)
+            if self.pendingUtterances == 0 { self.setState(false) }
         }
     }
 }
