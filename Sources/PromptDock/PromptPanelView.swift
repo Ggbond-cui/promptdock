@@ -182,7 +182,7 @@ struct PromptPanelView: View {
             ScrollView {
                 LazyVStack(spacing: 2) {
                     ForEach(Array(model.results.enumerated()), id: \.element.prompt.id) { index, item in
-                        row(item.prompt, selected: index == model.selection, number: index < 9 ? index + 1 : nil)
+                        row(item.prompt, selected: index == model.selection, number: index < 10 ? index + 1 : nil)
                             .id(item.prompt.id)
                             .contentShape(Rectangle())
                             // 不用 onTapGesture(count:2)+onTapGesture 组合：SwiftUI 为区分单双击
@@ -230,9 +230,9 @@ struct PromptPanelView: View {
     private func row(_ prompt: Prompt, selected: Bool, number: Int?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                // 数字角标：提示可按数字键直选；搜索中数字是输入内容，角标隐藏
+                // 数字角标：提示可按数字键直选（0 = 第 10 条）；搜索中数字是输入内容，角标隐藏
                 if let number, model.query.isEmpty, model.phase == .choosing, !model.isFormActive {
-                    Text("\(number)")
+                    Text("\(number == 10 ? 0 : number)")
                         .font(.caption2.monospaced().weight(.medium))
                         .foregroundStyle(selected ? AnyShapeStyle(Color.white.opacity(0.7)) : AnyShapeStyle(.tertiary))
                         .frame(width: 14)

@@ -25,8 +25,8 @@ import Testing
         #expect(PanelKeyRouter.command(keyCode: 18, commandKey: false, hasMarkedText: false) == .select(1))
         #expect(PanelKeyRouter.command(keyCode: 23, commandKey: false, hasMarkedText: false) == .select(5))
         #expect(PanelKeyRouter.command(keyCode: 25, commandKey: false, hasMarkedText: false) == .select(9))
-        // 0 不映射（列表直选只到 9）；带修饰键不映射
-        #expect(PanelKeyRouter.command(keyCode: 29, commandKey: false, hasMarkedText: false) == nil)
+        // 0 映射第 10 条；带修饰键不映射
+        #expect(PanelKeyRouter.command(keyCode: 29, commandKey: false, hasMarkedText: false) == .select(10))
         #expect(PanelKeyRouter.command(keyCode: 18, commandKey: true, hasMarkedText: false) == nil)
     }
 
