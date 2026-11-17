@@ -94,10 +94,15 @@ struct PromptPanelView: View {
     private var searchField: some View {
         HStack(spacing: 10) {
             Image(systemName: isActionMode ? "wand.and.stars" : "magnifyingglass").foregroundStyle(.secondary)
-            TextField(isActionMode ? "选择要执行的动作…" : "搜索提示词…", text: $model.query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 20))
-                .focused($searchFocused)
+            TextField(
+                isActionMode
+                    ? (model.isInputFallbackMode ? "输入要处理的内容…（↑↓ 或数字键选动作，↩ 执行）" : "选择要执行的动作…")
+                    : "搜索提示词…",
+                text: $model.query
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 20))
+            .focused($searchFocused)
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
     }
@@ -106,12 +111,12 @@ struct PromptPanelView: View {
         let text = model.selectionText
         let oneLine = text.replacingOccurrences(of: "\n", with: " ⏎ ")
         return HStack(spacing: 6) {
-            Text("选中 \(text.count) 字").font(.caption.weight(.medium))
+            Text("\(model.isInputFallbackMode ? "输入" : "选中") \(text.count) 字").font(.caption.weight(.medium))
             Text(oneLine).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             Spacer()
             phoneticText
             // 🔊 固定在最右端不随音标伸缩：听清不认识的词；配合回车执行「解释」类动作边听边看
-            speechButton(text: text, help: model.isSpeaking ? "停止朗读" : "朗读选中的原文")
+            speechButton(text: text, help: model.isSpeaking ? "停止朗读" : "朗读\(model.isInputFallbackMode ? "输入的内容" : "选中的原文")")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16).padding(.bottom, 8)
@@ -177,7 +182,7 @@ struct PromptPanelView: View {
             ScrollView {
                 LazyVStack(spacing: 2) {
                     ForEach(Array(model.results.enumerated()), id: \.element.prompt.id) { index, item in
-                        row(item.prompt, selected: index == model.selection)
+                        row(item.prompt, selected: index == model.selection, number: index < 9 ? index + 1 : nil)
                             .id(item.prompt.id)
                             .contentShape(Rectangle())
                             // 不用 onTapGesture(count:2)+onTapGesture 组合：SwiftUI 为区分单双击
@@ -222,9 +227,18 @@ struct PromptPanelView: View {
         return isActionMode ? "还没有动作\n在 prompts.yaml 中添加 type: action 的条目" : "还没有提示词"
     }
 
-    private func row(_ prompt: Prompt, selected: Bool) -> some View {
+    private func row(_ prompt: Prompt, selected: Bool, number: Int?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(prompt.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
+            HStack(spacing: 6) {
+                // 数字角标：提示可按数字键直选；搜索中数字是输入内容，角标隐藏
+                if let number, model.query.isEmpty, model.phase == .choosing, !model.isFormActive {
+                    Text("\(number)")
+                        .font(.caption2.monospaced().weight(.medium))
+                        .foregroundStyle(selected ? AnyShapeStyle(Color.white.opacity(0.7)) : AnyShapeStyle(.tertiary))
+                        .frame(width: 14)
+                }
+                Text(prompt.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
+            }
             HStack(spacing: 6) {
                 if !prompt.keywords.isEmpty {
                     Text(prompt.keywords.joined(separator: " · "))

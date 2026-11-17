@@ -72,8 +72,18 @@ final class PanelModel: ObservableObject {
     }
 
     var selectionText: String {
-        if case .actions(let text) = mode { return text }
+        if case .actions(let text) = mode {
+            // 无选区输入回退（spec 8.1）：读取不到选区时，搜索框输入的内容就是待处理文本
+            return text.isEmpty ? query : text
+        }
         return ""
+    }
+
+    /// 动作面板无选区（未选中/读取失败）时的输入回退模式：输入框输入待处理内容，
+    /// 列表不过滤保持全量（输入的是问题不是搜索词），回车把输入文本当选区执行。
+    var isInputFallbackMode: Bool {
+        if case .actions(let text) = mode { return text.isEmpty }
+        return false
     }
 
     func prepare(mode: PanelMode, prompts: [Prompt], frecency: [String: Double], notice: String?) {
@@ -145,7 +155,10 @@ final class PanelModel: ObservableObject {
     private func recompute() {
         let wanted: PromptType = mode == .prompts ? .snippet : .action
         let visible = allPrompts.filter { $0.type == wanted }
-        results = Matcher.rank(prompts: visible, frecency: frecency, query: query)
+        // 输入回退模式不过滤：输入框承载待处理内容，动作列表始终全量可选
+        results = isInputFallbackMode
+            ? Matcher.rank(prompts: visible, frecency: frecency, query: "")
+            : Matcher.rank(prompts: visible, frecency: frecency, query: query)
         selection = 0
     }
 }
