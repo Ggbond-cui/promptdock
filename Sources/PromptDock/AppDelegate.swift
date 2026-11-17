@@ -59,9 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.onLookupPhonetic = { [weak self] text, completion in
             self?.lookupPhonetic(text, completion: completion)
         }
-        panel.onFavorite = { [weak self] source, explanation, phonetic in
-            guard let self else { return "收藏失败" }
-            return self.favoriteToVault(source: source, explanation: explanation, phonetic: phonetic)
+        panel.onFavorite = { [weak self] source, explanation, phonetic, completion in
+            guard let self else { completion("收藏失败"); return }
+            self.favoriteToVault(source: source, explanation: explanation, phonetic: phonetic, completion: completion)
         }
         settingsWindow.onSave = { [weak self] base, target in self?.saveLibrary(from: base, to: target) }
         settingsWindow.onHotkeyRecording = { [weak self] in self?.setHotkeysPaused($0) }
@@ -319,35 +319,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// ⭐ 收藏到 Obsidian 词汇表（spec 9.4）：原文 + 模型解释 + 音标释义按月归档，最新在最上。
-    private func favoriteToVault(source: String, explanation: String, phonetic: PhoneticInfo?) -> String? {
+    /// ⭐ 收藏到 Obsidian 词汇表（spec 9.4）：先用默认模型把解释提炼成精简要点（失败回退原文解释），
+    /// 再按月归档写入；月文件内同标题词条去重。全流程异步，结果经 completion 回报（nil=成功）。
+    private func favoriteToVault(
+        source: String, explanation: String, phonetic: PhoneticInfo?,
+        completion: @escaping (String?) -> Void
+    ) {
         let trimmedSource = source.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedExplanation = explanation.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedSource.isEmpty, !trimmedExplanation.isEmpty else {
-            return "原文或解释为空：等生成完成再收藏"
+            completion("原文或解释为空：等生成完成再收藏")
+            return
         }
         guard let vault = ObsidianVaultLocator.locate() else {
-            return "没找到 Obsidian 仓库（vault）：确认已安装并打开过 Obsidian"
+            completion("没找到 Obsidian 仓库（vault）：确认已安装并打开过 Obsidian")
+            return
         }
-        do {
-            let dir = vault.appendingPathComponent(VocabularyNotebook.folderName, isDirectory: true)
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let file = dir.appendingPathComponent(VocabularyNotebook.fileName())
-            let existing = try? String(contentsOf: file, encoding: .utf8)
-            let entry = VocabularyNotebook.entry(
-                title: VocabularyNotebook.title(for: trimmedSource),
-                phonetic: phonetic,
-                source: trimmedSource,
-                explanation: trimmedExplanation)
-            var content = existing ?? VocabularyNotebook.template()
-            content = VocabularyNotebook.insert(entry: entry, into: content)
-            try content.write(to: file, atomically: true, encoding: .utf8)
-            Log.info("已收藏到 \(VocabularyNotebook.folderName)/\(VocabularyNotebook.fileName())")
-            return nil
-        } catch {
-            Log.error("收藏失败：\(error.localizedDescription)")
-            return "收藏失败：\(error.localizedDescription)"
+        let settings = state.library.settings
+        let title = VocabularyNotebook.title(for: trimmedSource)
+        Task { @MainActor in
+            // 提炼：解释压缩成「首行核心释义 + 1-4 条要点」；模型不可用则回退原文解释，收藏不中断
+            var summary: String?
+            do {
+                let instruction = """
+                    把下面的「原文」和「解释」提炼成一张精简词汇卡。要求：
+                    - 第一行：一句话核心释义，不超过 25 个字，不要重复原词本身
+                    - 然后 1-4 个要点，每条一行（以「- 」开头），保留最值得记的信息：常见用法、辨析、易混点
+                    - 中文为主，保留必要的英文术语；不要标题、不要编号、不要客套话，直接输出内容
+
+                    原文：
+                    \(trimmedSource)
+
+                    解释：
+                    \(trimmedExplanation)
+                    """
+                let target = try LLMTargetResolver.resolve(
+                    prompt: Prompt(id: "_fav", title: "_fav", content: trimmedSource), settings: settings)
+                let rendered = RenderedAction(system: "", userMessage: instruction, output: .show)
+                let request = try LLMRequestBuilder.build(
+                    rendered, target: target,
+                    apiKey: KeychainStore.readAPIKey(provider: target.provider.name),
+                    defaultEffort: settings.llm.effort)
+                var text = ""
+                let stream = LLMClient.stream(request, protocol: target.provider.protocolType) {
+                    LLMClient.sessionConfiguration(proxy: settings.network.proxy)
+                }
+                for try await event in stream {
+                    if case .text(let chunk) = event { text += chunk }
+                }
+                summary = Self.condenseSummary(text)
+            } catch {
+                Log.error("收藏提炼失败（回退原文解释）：\(error.localizedDescription)")
+            }
+            do {
+                let dir = vault.appendingPathComponent(VocabularyNotebook.folderName, isDirectory: true)
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let file = dir.appendingPathComponent(VocabularyNotebook.fileName())
+                let existing = try? String(contentsOf: file, encoding: .utf8)
+                var content = existing ?? VocabularyNotebook.template()
+                let entry = VocabularyNotebook.entry(
+                    title: title, phonetic: phonetic,
+                    summary: summary ?? trimmedExplanation)
+                guard let updated = VocabularyNotebook.insert(entry: entry, title: title, into: content) else {
+                    Log.info("词汇表本月已有「\(title)」，跳过重复收藏")
+                    completion("词汇表本月已有「\(title)」，未重复收藏")
+                    return
+                }
+                try updated.write(to: file, atomically: true, encoding: .utf8)
+                Log.info("已收藏到 \(VocabularyNotebook.folderName)/\(VocabularyNotebook.fileName())"
+                         + (summary == nil ? "（未提炼）" : ""))
+                completion(nil)
+            } catch {
+                Log.error("收藏失败：\(error.localizedDescription)")
+                completion("收藏失败：\(error.localizedDescription)")
+            }
         }
+    }
+
+    /// 提炼文本清洗：去空白、去掉模型可能带上的 Markdown 标题行、限制行数（防跑飞）。
+    private static func condenseSummary(_ text: String) -> String? {
+        let lines = text.components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { line in
+                guard !line.isEmpty else { return false }
+                return !line.hasPrefix("#")    // 标题行剔除
+            }
+        guard !lines.isEmpty else { return nil }
+        return Array(lines.prefix(8)).joined(separator: "\n")
     }
 
     private func setHotkeysPaused(_ paused: Bool) {

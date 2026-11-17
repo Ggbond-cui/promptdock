@@ -20,8 +20,9 @@ struct PromptPanelView: View {
     var onBack: () -> Void = {}
     /// 🔊 朗读/停止朗读：参数为要读的文本（动作面板读选中原文，结果页读模型输出）。
     var onToggleSpeech: (String) -> Void = { _ in }
-    /// ⭐ 收藏到 Obsidian 词汇表：（原文、模型解释、音标释义）→ 返回 nil 成功，否则为错误信息。
-    var onFavorite: (String, String, PhoneticInfo?) -> String? = { _, _, _ in nil }
+    /// ⭐ 收藏到 Obsidian 词汇表：（原文、模型解释、音标释义，回调 nil=成功/否则错误信息）。
+    /// 异步：收藏时先用模型把解释提炼成精简要点。
+    var onFavorite: (String, String, PhoneticInfo?, @escaping (String?) -> Void) -> Void = { _, _, _, _ in }
 
     @FocusState private var searchFocused: Bool
     @FocusState private var addTitleFocused: Bool
@@ -142,23 +143,32 @@ struct PromptPanelView: View {
         .help(help)
     }
 
-    /// ⭐ 收藏到 Obsidian 词汇表：成功后变实心黄星，本次结果内不可重复收藏。
+    /// ⭐ 收藏到 Obsidian 词汇表：提炼中转进度圈，成功后变实心黄星，防重复收藏。
     private var favoriteButton: some View {
         Button { favorite() } label: {
-            Image(systemName: model.favorited ? "star.fill" : "star")
+            if model.favoriting {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: model.favorited ? "star.fill" : "star")
+            }
         }
         .buttonStyle(.plain)
         .foregroundStyle(model.favorited ? Color.yellow : .secondary)
-        .disabled(model.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .help(model.favorited ? "已收藏到词汇表" : "收藏到 Obsidian 词汇表")
+        .disabled(model.favoriting
+                  || model.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .help(model.favorited ? "已收藏到词汇表" : "收藏到 Obsidian 词汇表（自动提炼精简要点）")
     }
 
     private func favorite() {
-        guard !model.favorited else { return }
-        if let error = onFavorite(model.activeInput, model.output, model.phonetic) {
-            model.notice = error
-        } else {
-            model.favorited = true
+        guard !model.favorited, !model.favoriting else { return }
+        model.favoriting = true
+        onFavorite(model.activeInput, model.output, model.phonetic) { error in
+            model.favoriting = false
+            if let error {
+                model.notice = error
+            } else {
+                model.favorited = true
+            }
         }
     }
 
