@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# 提交前泄露检查。启用：make hooks
+exec "$(git rev-parse --show-toplevel)/scripts/check-leaks.sh" --staged
