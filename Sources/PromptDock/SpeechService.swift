@@ -24,12 +24,17 @@ final class SpeechService: NSObject, AVSpeechSynthesizerDelegate {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         stop()
-        let utterance = AVSpeechUtterance(string: trimmed)
-        utterance.voice = Self.voice(for: trimmed)
-        // 温柔感微调：比默认稍慢、音调略抬（可感知的柔和，不夸张）
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
-        utterance.pitchMultiplier = 1.05
-        synthesizer.speak(utterance)
+        // 按句切分逐句入队：句间自然停顿，长文节奏更像真人念稿（拼接式 TTS 一口气念完最机械）
+        let voice = Self.voice(for: trimmed)
+        for sentence in Self.sentences(in: trimmed) {
+            let utterance = AVSpeechUtterance(string: sentence)
+            utterance.voice = voice
+            // 温柔感微调：比默认稍慢、音调略抬（可感知的柔和，不夸张）
+            utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
+            utterance.pitchMultiplier = 1.05
+            utterance.postUtteranceDelay = 0.3   // 句间呼吸感
+            synthesizer.speak(utterance)
+        }
         setState(true)
     }
 
@@ -64,10 +69,34 @@ final class SpeechService: NSObject, AVSpeechSynthesizerDelegate {
             ?? AVSpeechSynthesisVoice(language: language)
     }
 
+    /// 按中文句读与换行切句；英文句号有缩写/小数歧义，不切（韵律交给合成器）。
+    private static func sentences(in text: String) -> [String] {
+        return text
+            .components(separatedBy: "\n")
+            .flatMap { line -> [String] in
+                var parts: [String] = []
+                var current = ""
+                for character in line {
+                    current.append(character)
+                    if "。！？!?；;".contains(character) {
+                        parts.append(current)
+                        current = ""
+                    }
+                }
+                parts.append(current)
+                return parts
+            }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
     // MARK: - AVSpeechSynthesizerDelegate
 
     // delegate 回调线程没有文档保证，不能 assumeIsolated（非主线程会直接崩溃）
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in setState(false) }
+        // 参数 synthesizer 非 Sendable 不能跨 actor 捕获，用 self 上的同名属性判断
+        Task { @MainActor in
+            if !self.synthesizer.isSpeaking { self.setState(false) }
+        }
     }
 }
