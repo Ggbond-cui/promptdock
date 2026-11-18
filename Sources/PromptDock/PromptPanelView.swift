@@ -51,11 +51,16 @@ struct PromptPanelView: View {
             else if model.isFormActive { formHeader }
             else { searchField }
             if let notice = model.notice {
-                Text(notice)
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16).padding(.bottom, 8)
+                // 克制版提示条：淡灰胶囊 + 次级小字，替代原先的大段橙色文字（视觉过重）
+                HStack(spacing: 4) {
+                    Image(systemName: "info.circle").font(.caption2)
+                    Text(notice).font(.caption)
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(.quaternary.opacity(0.5)))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.bottom, 8)
             }
             if let pending = model.pendingDelete, !model.isFormActive, !showsResult { deleteConfirmBar(pending) }
             if isActionMode && !showsResult && !model.isFormActive { selectionBar }
@@ -234,7 +239,7 @@ struct PromptPanelView: View {
                 if let number, model.query.isEmpty, model.phase == .choosing, !model.isFormActive {
                     Text("\(number == 10 ? 0 : number)")
                         .font(.caption2.monospaced().weight(.medium))
-                        .foregroundStyle(selected ? AnyShapeStyle(Color.white.opacity(0.7)) : AnyShapeStyle(.tertiary))
+                        .foregroundStyle(.tertiary)
                         .frame(width: 14)
                 }
                 Text(prompt.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
@@ -242,7 +247,7 @@ struct PromptPanelView: View {
             HStack(spacing: 6) {
                 if !prompt.keywords.isEmpty {
                     Text(prompt.keywords.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary).lineLimit(1)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 // ✨：剪贴板内容 + 该提示词直接跑大模型，结果在面板内显示（spec 8.1）。
                 // 动作面板的输入是选区，不显示，避免和剪贴板输入混淆。
@@ -253,16 +258,25 @@ struct PromptPanelView: View {
                             .font(.caption)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary)
+                    .foregroundStyle(.secondary)
                     .disabled(!model.clipboardHasText)
                     .help(model.clipboardHasText ? "用大模型处理剪贴板内容" : "剪贴板没有文本：先复制要处理的内容（⌘C）")
                 }
             }
         }
-        .foregroundStyle(selected ? Color.white : Color.primary)
+        .foregroundStyle(Color.primary)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accentColor : Color.clear))
+        // 克制版选中态（Spotlight 式）：淡 accent 底不反白文字，左侧细指示条标位置
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accentColor.opacity(0.12) : Color.clear))
+        .overlay(alignment: .leading) {
+            if selected {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Color.accentColor)
+                    .frame(width: 3)
+                    .padding(.vertical, 4)
+            }
+        }
     }
 
     private var preview: some View {
@@ -287,20 +301,20 @@ struct PromptPanelView: View {
                 ProgressView().controlSize(.small)
                 Text(model.isThinking && model.output.isEmpty ? "思考中…" : "生成中…").foregroundStyle(.secondary)
             case .done:
-                // 淡色底胶囊徽章：裸绿字在浅灰面板上太素（用户反馈），加底色和描边更像状态标签
-                Label("完成", systemImage: "checkmark")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.green.opacity(0.12)))
-                    .overlay(Capsule().strokeBorder(Color.green.opacity(0.3)))
+                // 克制版状态标签（用户选定方向）：小圆点示状态色，文字用次级灰
+                HStack(spacing: 4) {
+                    Circle().fill(Color.green).frame(width: 4, height: 4)
+                    Text("完成")
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
             case .failed:
-                Label("失败", systemImage: "xmark")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(Capsule().fill(Color.red.opacity(0.1)))
-                    .overlay(Capsule().strokeBorder(Color.red.opacity(0.3)))
+                HStack(spacing: 4) {
+                    Circle().fill(Color.red).frame(width: 4, height: 4)
+                    Text("失败")
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
             case .choosing:
                 EmptyView()
             }
