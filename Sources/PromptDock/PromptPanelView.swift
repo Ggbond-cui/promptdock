@@ -245,7 +245,8 @@ struct PromptPanelView: View {
                         .font(.caption).foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary).lineLimit(1)
                 }
                 // ✨：剪贴板内容 + 该提示词直接跑大模型，结果在面板内显示（spec 8.1）。
-                // 动作面板的输入是选区，不显示，避免和剪贴板输入混淆
+                // 动作面板的输入是选区，不显示，避免和剪贴板输入混淆。
+                // 空剪贴板直接禁用：✨ 在行内容易误触，弹警告条太吵，引导进 tooltip
                 if !isActionMode {
                     Button { onRunPrompt(prompt) } label: {
                         Image(systemName: "wand.and.stars")
@@ -253,7 +254,8 @@ struct PromptPanelView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(selected ? Color.white.opacity(0.85) : .secondary)
-                    .help("用大模型处理剪贴板内容")
+                    .disabled(!model.clipboardHasText)
+                    .help(model.clipboardHasText ? "用大模型处理剪贴板内容" : "剪贴板没有文本：先复制要处理的内容（⌘C）")
                 }
             }
         }

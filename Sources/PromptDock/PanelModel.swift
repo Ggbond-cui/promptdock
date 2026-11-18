@@ -63,6 +63,8 @@ final class PanelModel: ObservableObject {
     @Published var favorited = false
     /// 收藏进行中（模型提炼词条正文）：⭐ 转进度圈，防连点。
     @Published var favoriting = false
+    /// 剪贴板是否可 ✨ 直接跑模型：面板打开时读取一次；空剪贴板下 ✨ 禁用（点错不弹警告）。
+    @Published var clipboardHasText = false
 
     private var allPrompts: [Prompt] = []
     private var frecency: [String: Double] = [:]

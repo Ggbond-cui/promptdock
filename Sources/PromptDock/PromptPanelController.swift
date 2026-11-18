@@ -99,6 +99,9 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
     }
 
     func show(mode: PanelMode, prompts: [Prompt], frecency: [String: Double], notice: String?) {
+        // 打开时读一次剪贴板可跑性：空剪贴板 ✨ 直接禁用，误触不再弹橙色警告（引导进 tooltip）
+        model.clipboardHasText = (NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
         model.prepare(mode: mode, prompts: prompts, frecency: frecency, notice: notice)
         position()
         panel.makeKeyAndOrderFront(nil)
