@@ -65,7 +65,7 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
         speech.onStateChanged = { [weak self] speaking in
             self?.model.isSpeaking = speaking
         }
-        let host = NSHostingView(rootView: PromptPanelView(
+        let host = PanelHostingView(rootView: PromptPanelView(
             model: model,
             onActivate: { [weak self] command in _ = self?.handle(command) },
             onAddPrompt: { [weak self] title, keywords, content in

@@ -53,9 +53,10 @@ install: sign
 	@sleep 1
 	open $(INSTALL)
 
-# 发布用安装包：通用二进制（Apple 芯片 + Intel）、临时签名（未经 Apple 公证，见 README「下载安装」）
+# 发布用安装包：通用二进制（Apple 芯片 + Intel）
+# 签名沿用 SIGN_ID（默认 PromptDock Dev 固定证书）；不要用 ad-hoc，否则装后辅助功能授权会失效
 dmg:
-	$(MAKE) sign SWIFT_FLAGS="--arch arm64 --arch x86_64" SIGN_ID=-
+	$(MAKE) sign SWIFT_FLAGS="--arch arm64 --arch x86_64"
 	lipo -archs $(APP)/Contents/MacOS/PromptDock
 	rm -rf build/dmg $(DMG)
 	mkdir -p build/dmg

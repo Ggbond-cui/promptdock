@@ -45,6 +45,8 @@ struct PromptPanelView: View {
     @State private var keywordRequest = 0
     /// 上一次行点击（时间、条目 id），用于自定义双击检测（单击立即选中不延迟）。
     @State private var lastRowClick: (date: Date, id: String)?
+    /// 鼠标悬停的行：悬停用中性浅底，与键盘选中态区分开。
+    @State private var hoveredID: String?
 
     private var isActionMode: Bool { model.mode != .prompts }
     /// 结果阶段：⌥⇧Space 动作执行中/完成/失败，或 ⌥Space 面板 ✨ 跑模型中。
@@ -72,7 +74,7 @@ struct PromptPanelView: View {
             }
             if let pending = model.pendingDelete, !model.isFormActive, !showsResult { deleteConfirmBar(pending) }
             if isActionMode && !showsResult && !model.isFormActive { selectionBar }
-            Divider()
+            hairline
             if showsResult {
                 resultBody
             } else if model.isFormActive {
@@ -80,11 +82,11 @@ struct PromptPanelView: View {
             } else {
                 HStack(spacing: 0) {
                     resultList.frame(width: 300)
-                    Divider()
+                    verticalHairline
                     preview
                 }
             }
-            Divider()
+            hairline
             footer
         }
         .frame(width: 720, height: 420)
@@ -101,6 +103,14 @@ struct PromptPanelView: View {
         } else {
             searchFocused = true
         }
+    }
+
+    /// 极细分隔线：系统 Divider 在毛玻璃上偏白偏重，这里用 6% 前景色。
+    private var hairline: some View {
+        Rectangle().fill(Color.primary.opacity(0.07)).frame(height: 1)
+    }
+    private var verticalHairline: some View {
+        Rectangle().fill(Color.primary.opacity(0.07)).frame(width: 1)
     }
 
     // MARK: - 选择阶段
@@ -196,9 +206,13 @@ struct PromptPanelView: View {
             ScrollView {
                 LazyVStack(spacing: 2) {
                     ForEach(Array(model.results.enumerated()), id: \.element.prompt.id) { index, item in
-                        row(item.prompt, selected: index == model.selection, number: index < 10 ? index + 1 : nil)
+                        row(item.prompt,
+                            selected: index == model.selection,
+                            hovered: hoveredID == item.prompt.id,
+                            number: index < 10 ? index + 1 : nil)
                             .id(item.prompt.id)
                             .contentShape(Rectangle())
+                            .onHover { hovering in hoveredID = hovering ? item.prompt.id : nil }
                             // 不用 onTapGesture(count:2)+onTapGesture 组合：SwiftUI 为区分单双击
                             // 会把单击延迟约 300ms（等双击窗口过期），手感明显卡顿（实测踩坑）。
                             // 改为单击立即选中，300ms 内二次点击同一条才视为双击粘贴。
@@ -241,22 +255,26 @@ struct PromptPanelView: View {
         return isActionMode ? "还没有动作\n在 prompts.yaml 中添加 type: action 的条目" : "还没有提示词"
     }
 
-    private func row(_ prompt: Prompt, selected: Bool, number: Int?) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    private func row(_ prompt: Prompt, selected: Bool, hovered: Bool, number: Int?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 // 数字角标：提示可按数字键直选（0 = 第 10 条）；搜索中数字是输入内容，角标隐藏
                 if let number, model.query.isEmpty, model.phase == .choosing, !model.isFormActive {
                     Text("\(number == 10 ? 0 : number)")
                         .font(.caption2.monospaced().weight(.medium))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(selected ? Color.dockAccent : Color.secondary.opacity(0.6))
                         .frame(width: 14)
                 }
-                Text(prompt.title).font(.system(size: 14, weight: .medium)).lineLimit(1)
+                Text(prompt.title)
+                    .font(.system(size: 14, weight: selected ? .semibold : .medium))
+                    .lineLimit(1)
             }
             HStack(spacing: 6) {
                 if !prompt.keywords.isEmpty {
                     Text(prompt.keywords.joined(separator: " · "))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.caption)
+                        .foregroundStyle(selected ? Color.dockAccent.opacity(0.75) : Color.secondary)
+                        .lineLimit(1)
                 }
                 // ✨：剪贴板内容 + 该提示词直接跑大模型，结果在面板内显示（spec 8.1）。
                 // 动作面板的输入是选区，不显示，避免和剪贴板输入混淆。
@@ -275,17 +293,30 @@ struct PromptPanelView: View {
         }
         .foregroundStyle(Color.primary)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        // 克制版选中态（Spotlight 式）：淡 accent 底不反白文字，左侧细指示条标位置
-        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.dockAccent.opacity(0.10) : Color.clear))
-        .overlay(alignment: .leading) {
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        // 悬停用中性浅底，键盘选中用低饱和绿底 + 内描边 + 左侧圆角指示条，三层都收在同一圆角里
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(selected ? Color.dockAccent.opacity(0.13)
+                      : hovered ? Color.primary.opacity(0.055) : Color.clear)
+        }
+        .overlay {
             if selected {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.dockAccent)
-                    .frame(width: 3)
-                    .padding(.vertical, 4)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.dockAccent.opacity(0.18), lineWidth: 0.5)
             }
         }
+        .overlay(alignment: .leading) {
+            if selected {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(Color.dockAccent)
+                    .frame(width: 3)
+                    .padding(.vertical, 9)
+                    .padding(.leading, 3)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: selected)
+        .animation(.easeOut(duration: 0.12), value: hovered)
     }
 
     private var preview: some View {
@@ -558,10 +589,65 @@ struct PromptPanelView: View {
 struct VisualEffectBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
+        // 固定浅色 vibrant 材质：深色壁纸下 behindWindow 不再把面板拖成灰紫
+        view.appearance = NSAppearance(named: .vibrantLight)
         view.material = .popover
         view.blendingMode = .behindWindow
         view.state = .active
         return view
     }
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+/// 细滚动条：SwiftUI 在 macOS 上的 ScrollView 底层是 NSScrollView，滚动条样式只能在 AppKit 层替换。
+/// 系统默认滚动条约 15pt 且画一条浅色轨道，在浅灰面板上又粗又白，很突兀（用户反馈）。
+/// 这里收窄到 4pt、不画轨道、thumb 用 3pt 半透明胶囊，融入背景。
+final class ThinScroller: NSScroller {
+    override class func scrollerWidth(for controlSize: NSControl.ControlSize,
+                                      scrollerStyle: NSScroller.Style) -> CGFloat { 4 }
+
+    override var intrinsicContentSize: NSSize {
+        var size = super.intrinsicContentSize
+        size.width = 4
+        return size
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        // 不画轨道底色（系统默认那条浅色底就是「白条」的来源）
+    }
+
+    override func drawKnob() {
+        let k = rect(for: .knob)
+        let width: CGFloat = 3
+        let rect = NSRect(x: k.midX - width / 2, y: k.minY + 2,
+                          width: width, height: max(0, k.height - 4))
+        NSColor.secondaryLabelColor.withAlphaComponent(0.5).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: width / 2, yRadius: width / 2).fill()
+    }
+}
+
+/// 递归把视图树里的 NSScrollView 滚动条换成细版。已是细版则跳过，避免 layout 阶段反复赋值触发递归。
+extension NSView {
+    func installThinScrollers() {
+        if let scroll = self as? NSScrollView {
+            if !(scroll.verticalScroller is ThinScroller) {
+                scroll.scrollerStyle = .overlay
+                scroll.drawsBackground = false
+                scroll.backgroundColor = .clear
+                scroll.autohidesScrollers = true
+                scroll.verticalScroller = ThinScroller()
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
+        }
+        for sub in subviews { sub.installThinScrollers() }
+    }
+}
+
+/// 面板宿主视图：SwiftUI 会在视图更新时重建内部 NSScrollView，
+/// 所以在每次 layout 后都重新安装细滚动条（内部有幂等判断，不会递归）。
+final class PanelHostingView: NSHostingView<PromptPanelView> {
+    override func layout() {
+        super.layout()
+        installThinScrollers()
+    }
 }
