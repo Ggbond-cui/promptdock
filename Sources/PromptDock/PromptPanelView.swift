@@ -2,6 +2,14 @@ import PromptDockCore
 import AppKit
 import SwiftUI
 
+// 应用主题色：低饱和深松绿 #3F7D5B（克制、不荧光，适配暖色毛玻璃背景）
+extension Color {
+    static let dockAccent = Color(red: 63 / 255, green: 125 / 255, blue: 91 / 255)
+}
+extension NSColor {
+    static let dockAccent = NSColor(srgbRed: 63 / 255, green: 125 / 255, blue: 91 / 255, alpha: 1)
+}
+
 struct PromptPanelView: View {
     @ObservedObject var model: PanelModel
     var onActivate: (PanelCommand) -> Void
@@ -81,6 +89,7 @@ struct PromptPanelView: View {
         }
         .frame(width: 720, height: 420)
         .background(VisualEffectBackground())
+        .tint(Color.dockAccent)
         .onChange(of: model.focusRequest, initial: true) { searchFocused = true }
         .onChange(of: model.addingPrompt) { keywordRequest += 1; generatingKeywords = false; formFocusChanged() }
         .onChange(of: model.editingPrompt) { keywordRequest += 1; generatingKeywords = false; formFocusChanged() }
@@ -268,11 +277,11 @@ struct PromptPanelView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 7)
         // 克制版选中态（Spotlight 式）：淡 accent 底不反白文字，左侧细指示条标位置
-        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.accentColor.opacity(0.12) : Color.clear))
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.dockAccent.opacity(0.10) : Color.clear))
         .overlay(alignment: .leading) {
             if selected {
                 RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Color.accentColor)
+                    .fill(Color.dockAccent)
                     .frame(width: 3)
                     .padding(.vertical, 4)
             }

@@ -30,6 +30,7 @@ struct HistoryView: View {
             }
         }
         .frame(minWidth: 520, minHeight: 420)
+        .tint(Color.dockAccent)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(role: .destructive, action: onClear) { Label("清空", systemImage: "trash") }

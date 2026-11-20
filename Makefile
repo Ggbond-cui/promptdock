@@ -1,6 +1,6 @@
 APP      := build/PromptDock.app
 SIGN_ID  ?= PromptDock Dev
-INSTALL  := $(HOME)/Applications/PromptDock.app
+INSTALL  := /Applications/PromptDock.app   # 与实际运行位置一致；改这里前先想清楚 TCC 授权绑定的是路径+签名
 ICON     := build/AppIcon.icns
 # 版本号取最近的 git tag（v0.1.0 → 0.1.0），没有 tag 时为 0.1.0；构建号为提交数
 VERSION  ?= $(or $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//'),0.1.0)
