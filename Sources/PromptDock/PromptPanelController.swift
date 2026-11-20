@@ -95,6 +95,9 @@ final class PromptPanelController: NSObject, NSWindowDelegate {
         ))
         // 透明标题栏区域默认算作安全区，内容会让出这一条，露出白色窗口底色；让内容铺满整个窗口
         host.safeAreaRegions = []
+        // 面板固定浅色外观：毛玻璃与文字语义色都按浅色解析。
+        // 深色壁纸下 behindWindow 混合会把 popover 材质拖成灰紫，主题绿叠上去发闷（用户反馈）
+        host.appearance = NSAppearance(named: .vibrantLight)
         panel.contentView = host
     }
 
